@@ -58,16 +58,6 @@ struct block_t {
 };
 typedef struct block_t block_t;
 
-// struct block_entry {
-//  struct block_entry *previous;
-//  struct block_entry *next;
-//  block_t *block;
-//};
-// typedef struct block_entry block_entry;
-
-// block_entry *free_blocks;
-// block_entry *used_blocks;
-
 const int CLASSES[] = {2,  4,   6,   8,   10,   12,   14,   16, 32,
                        64, 128, 256, 512, 1024, 2048, 4096, 0};
 
