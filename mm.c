@@ -23,12 +23,12 @@
 
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
-#define DEBUG
-#ifdef DEBUG
-#define debug(...) printf(__VA_ARGS__)
-#else
-#define debug(...)
-#endif
+//#define DEBUG
+//#ifdef DEBUG
+//#define debug(...) printf(__VA_ARGS__)
+//#else
+//#define debug(...)
+//#endif
 
 /* do not change the following! */
 #ifdef DRIVER
@@ -38,6 +38,8 @@
 #define realloc mm_realloc
 #define calloc mm_calloc
 #endif /* def DRIVER */
+
+#define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
@@ -226,7 +228,7 @@ void search_for_block(block_t *block) {
 
     for (int j = 0; head != NULL; j++) {
       if (head == block) {
-        printf("FOUND in [%d] at pos: %d\n", i, j);
+        debug("FOUND in [%d] at pos: %d\n", i, j);
       }
       head = get_next(head);
     }
@@ -259,7 +261,6 @@ void update_sizes() {
  * mm_init - Called when a new trace starts.
  */
 int mm_init(void) {
-  printf("INIT\n");
   //  printf("SIZE: %d\n", find_list_for_size(3));
   //  fflush(NULL);
   /* Pad heap start so first payload is at ALIGNMENT. */
@@ -267,7 +268,7 @@ int mm_init(void) {
     return -1;
 
   (void)block_position;
-  for(int i = 0; i < CLASSES_N; i++) {
+  for (int i = 0; i < CLASSES_N; i++) {
     heapp[i] = NULL;
   }
 
@@ -275,7 +276,6 @@ int mm_init(void) {
 }
 
 block_t *allocate_new_block(size_t size) {
-  printf("MEMBRK %p\n", mem_sbrk(0));
   block_t *block = mem_sbrk(size);
   if ((long)block < 0)
     return NULL;
@@ -297,8 +297,7 @@ block_t *find_block(size_t size) {
   assert(block_position(list_get_first(list_index), block, 0) == -1);
   if (block == NULL) {
     block = allocate_new_block(size);
-    printf("ALLOCATED %p PAYLOAD %p\n", block, block->payload);
-    fflush(NULL);
+    debug("ALLOCATED %p PAYLOAD %p\n", block, block->payload);
     assert(get_next(block) == NULL);
     assert(get_size(block) >= size);
     return block;
@@ -312,8 +311,7 @@ block_t *find_block(size_t size) {
   }
   set_header(block, -1, true, NULL);
   assert(free_length(list_get_first(list_index)) == previous_length - 1);
-  printf("FOUND %p PAYLOAD %p\n", block, block->payload);
-  fflush(NULL);
+  debug("FOUND %p PAYLOAD %p\n", block, block->payload);
   return block;
 }
 
@@ -325,12 +323,11 @@ void *malloc(size_t size) {
   malloc_counter++;
   assert(size > 0);
   const size_t desired_size = size;
-  printf("%u MALLOC %ld ", malloc_counter, size);
-  fflush(NULL);
+  debug("%u MALLOC %ld ", malloc_counter, size);
   size = round_up(sizeof(block_t) + size);
   block_t *block = find_block(size);
 
-//  search_for_block((block_t *)0x800000000);
+  //  search_for_block((block_t *)0x800000000);
   assert(get_size(block) >= desired_size);
   assert(is_block_allocated(block));
   assert(get_next(block) == NULL);
@@ -348,9 +345,8 @@ void free(void *ptr) {
   const int hsize = heap_size();
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
-  printf("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
+  debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
   assert(!is_in_heap(block));
-  fflush(NULL);
   assert(get_size(block) > 0);
   assert(get_size(block) % 2 == 0);
   assert(get_next(block) == NULL);
@@ -372,8 +368,7 @@ void free(void *ptr) {
 void *realloc(void *old_ptr, size_t size) {
   {
     block_t *block = pointer_to_block(old_ptr);
-    printf("REALLOC %p %p %ld\n", old_ptr, block, get_size(block));
-    fflush(NULL);
+    debug("REALLOC %p %p %ld\n", old_ptr, block, get_size(block));
   }
   /* If size == 0 then this is just free, and we return NULL. */
   if (size == 0) {
@@ -408,10 +403,7 @@ void *realloc(void *old_ptr, size_t size) {
  * calloc - Allocate the block and set it to zero.
  */
 void *calloc(size_t nmemb, size_t size) {
-  {
-    printf("CALLOC ");
-    fflush(NULL);
-  }
+  debug("CALLOC ");
   size_t bytes = nmemb * size;
   void *new_ptr = malloc(bytes);
 
@@ -437,8 +429,6 @@ void validate_list(block_t *list) {
  * mm_checkheap - So simple, it doesn't need a checker!
  */
 void mm_checkheap(int verbose) {
-  //  printf("MM_CHECKHEAP\n");
-  //  fflush(NULL);
   for (int i = 0; i < CLASSES_N; i++) {
     validate_list(heapp[i]);
   }
