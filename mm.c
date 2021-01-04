@@ -45,6 +45,7 @@
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
+uint32_t split_counter = 0;
 
 typedef int32_t block_header;
 typedef block_header block_footer;
@@ -64,6 +65,9 @@ typedef struct block_t block_t;
 const int CLASSES[] = {2,  4,   6,   8,   10,   12,   14,   16, 32,
                        64, 128, 256, 512, 1024, 2048, 4096, 0};
 
+#define MINIMAL_PAYLOAD_SIZE CLASSES[0]
+#define MINIMAL_BLOCK_SIZE (sizeof(block_t) + MINIMAL_PAYLOAD_SIZE)
+
 #define CLASSES_N (sizeof(CLASSES) / sizeof(typeof(*CLASSES)))
 static struct block_t *heapp[CLASSES_N] = {NULL};
 static int sizes[CLASSES_N] = {0};
@@ -81,23 +85,29 @@ int find_list_for_size(size_t size) {
   return i;
 }
 
+static void *block_end(block_t *block) {
+  return (void *)((char *)block + (block->header & -2));
+}
+
 static size_t round_up(size_t size) {
   return (size + ALIGNMENT - 1) & -ALIGNMENT;
 }
 static block_header *get_header(block_t *block) {
   return &block->header;
 }
-static size_t get_size(block_t *block) {
-  return *get_header(block) & -2;
-}
 static block_footer *get_footer(block_t *block) {
   block_footer *footerp =
-    (block_footer *)(((char *)block) + get_size(block) - sizeof(block_footer));
+    (block_footer *)(block_end(block) - sizeof(block_footer));
 
   return footerp;
 }
 
-//static size_t get_size_from_footer(block_t *block) {
+static size_t get_size(block_t *block) {
+  assert(*get_header(block) == *get_footer(block));
+  return *get_header(block) & -2;
+}
+
+// static size_t get_size_from_footer(block_t *block) {
 //  return *get_footer(block) & -2;
 //}
 
@@ -143,6 +153,17 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
 static bool block_is_allocated(block_t *block) {
   assert(block != NULL);
   return block->header & 1;
+}
+
+static block_t *block_resize(block_t *block, size_t size) {
+  assert(size > 0);
+  size_t old_size = get_size(block);
+  size_t new_block_size = old_size - size;
+  assert(new_block_size >= MINIMAL_BLOCK_SIZE);
+  set_header(block, size, block_is_allocated(block), get_next(block));
+  block_t *new_block = block_end(block);
+  set_header(new_block, new_block_size, false, NULL);
+  return new_block;
 }
 
 block_t *list_get_first(int class) {
@@ -283,7 +304,17 @@ block_t *allocate_new_block(size_t size) {
 }
 
 block_t *split_block(block_t *block, size_t desired_size) {
-  return NULL;
+  (void)block_resize;
+  //  return NULL;
+  assert((get_size(block) - desired_size) >= 0);
+  if ((get_size(block) - desired_size) <= MINIMAL_BLOCK_SIZE) {
+    return NULL;
+  }
+  size_t old_size = get_size(block);
+  block_t *new_block = block_resize(block, desired_size);
+  debug("SPLITTED %p=%ld into %ld and %ld sized blocks [%p]\n", block, old_size,
+        get_size(block), get_size(new_block), new_block);
+  return new_block;
 }
 
 block_t *find_block(size_t size) {
@@ -305,11 +336,12 @@ block_t *find_block(size_t size) {
   assert(get_next(block) == NULL);
   block_t *splitted_block = split_block(block, size);
   if (splitted_block != NULL) {
-    /// TODO
-    //    heapp[list_index] = block->next;
+    list_push(splitted_block);
+    assert(heap_size() == hsize);
   }
   set_header(block, -1, true, NULL);
-  assert(free_length(list_get_first(list_index)) == previous_length - 1);
+  assert(free_length(list_get_first(list_index)) <=
+         previous_length - (splitted_block == NULL ? 1 : 0));
   debug("FOUND %p PAYLOAD %p\n", block, block->payload);
   return block;
 }
