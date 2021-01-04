@@ -40,8 +40,8 @@
 #endif /* def DRIVER */
 
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
-#undef assert
-#define assert(...)
+//#undef assert
+//#define assert(...)
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
@@ -117,14 +117,8 @@ bool has_cycle(block_t *list) {
   return false;
 }
 
-// static size_t get_footer(block_t *block) {
-//  return
-//}
-
 static void set_next(block_t *block, block_t *next) {
   assert(block != next);
-  //  printf("SET NEXT %p\n", next);
-  //  fflush(NULL);
   block->next = next;
 }
 static void set_header(block_t *block, size_t size, bool is_allocated,
@@ -137,7 +131,6 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
   block->header = size | is_allocated;
   assert(((void *)next) < mem_sbrk(0));
   set_next(block, next);
-  //  block->magic = (int64_t)MAGIC;
 }
 
 static bool is_block_allocated(block_t *block) {
@@ -172,7 +165,6 @@ block_t *search_for_block_of_size(int class, size_t desired_size) {
 
 void list_push(block_t *block) {
   assert(block != NULL);
-  //  assert(block->next == MAGIC);
   assert(!is_block_allocated(block));
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
@@ -181,7 +173,6 @@ void list_push(block_t *block) {
     heapp[list_index] = block;
   } else {
     assert(!is_block_allocated(heapp[list_index]));
-    //    block->next = heapp[list_index];
     set_next(block, heapp[list_index]);
     heapp[list_index] = block;
   }
@@ -247,7 +238,6 @@ int free_length(block_t *list) {
   while (list != NULL) {
     i++;
     list = get_next(list);
-    //    assert(list != NULL);
   }
   return i;
 }
@@ -263,8 +253,6 @@ void update_sizes() {
  * mm_init - Called when a new trace starts.
  */
 int mm_init(void) {
-  //  printf("SIZE: %d\n", find_list_for_size(3));
-  //  fflush(NULL);
   /* Pad heap start so first payload is at ALIGNMENT. */
   if ((long)mem_sbrk(ALIGNMENT - offsetof(block_t, payload)) < 0)
     return -1;
@@ -293,7 +281,6 @@ block_t *split_block(block_t *block, size_t desired_size) {
 
 block_t *find_block(size_t size) {
   int list_index = find_list_for_size(size);
-  //  printf("list: %d, size: %ld\n", list_index, size);
   int previous_length = free_length(list_get_first(list_index));
   (void)previous_length;
   const int hsize = heap_size();
