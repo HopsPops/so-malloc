@@ -40,6 +40,8 @@
 #endif /* def DRIVER */
 
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
+#undef assert
+#define assert(...)
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
@@ -268,6 +270,7 @@ int mm_init(void) {
     return -1;
 
   (void)block_position;
+  (void)is_block_allocated;
   for (int i = 0; i < CLASSES_N; i++) {
     heapp[i] = NULL;
   }
@@ -292,7 +295,9 @@ block_t *find_block(size_t size) {
   int list_index = find_list_for_size(size);
   //  printf("list: %d, size: %ld\n", list_index, size);
   int previous_length = free_length(list_get_first(list_index));
+  (void)previous_length;
   const int hsize = heap_size();
+  (void)hsize;
   block_t *block = search_for_block_of_size(list_index, size);
   assert(block_position(list_get_first(list_index), block, 0) == -1);
   if (block == NULL) {
@@ -323,6 +328,7 @@ void *malloc(size_t size) {
   malloc_counter++;
   assert(size > 0);
   const size_t desired_size = size;
+  (void)desired_size;
   debug("%u MALLOC %ld ", malloc_counter, size);
   size = round_up(sizeof(block_t) + size);
   block_t *block = find_block(size);
@@ -343,6 +349,7 @@ void *malloc(size_t size) {
 void free(void *ptr) {
   free_counter++;
   const int hsize = heap_size();
+  (void)hsize;
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
   debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
@@ -354,6 +361,7 @@ void free(void *ptr) {
 
   int list_index = find_list_for_size(get_size(block));
   int previous_length = free_length(list_get_first(list_index));
+  (void)previous_length;
   set_header(block, -1, false, NULL);
   list_push(block);
   assert(heap_size() == (hsize + 1));
