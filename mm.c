@@ -46,8 +46,11 @@
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
 
+typedef int32_t block_header;
+typedef block_header block_footer;
+
 struct block_t {
-  int32_t header;
+  block_header header;
   struct block_t *next;
   /*
    * We don't know what the size of the payload will be, so we will
@@ -81,10 +84,22 @@ int find_list_for_size(size_t size) {
 static size_t round_up(size_t size) {
   return (size + ALIGNMENT - 1) & -ALIGNMENT;
 }
-
-static size_t get_size(block_t *block) {
-  return block->header & -2;
+static block_header *get_header(block_t *block) {
+  return &block->header;
 }
+static size_t get_size(block_t *block) {
+  return *get_header(block) & -2;
+}
+static block_footer *get_footer(block_t *block) {
+  block_footer *footerp =
+    (block_footer *)(((char *)block) + get_size(block) - sizeof(block_footer));
+
+  return footerp;
+}
+
+//static size_t get_size_from_footer(block_t *block) {
+//  return *get_footer(block) & -2;
+//}
 
 static block_t *get_next(block_t *block) {
   assert(block != NULL);
@@ -118,12 +133,14 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
   if (size == -1) {
     size = get_size(block);
   }
-  block->header = size | is_allocated;
+  *get_header(block) = size | is_allocated;
+  *get_footer(block) = size | is_allocated;
+  assert(*get_header(block) == *get_footer(block));
   assert(((void *)next) < mem_sbrk(0));
   set_next(block, next);
 }
 
-static bool is_block_allocated(block_t *block) {
+static bool block_is_allocated(block_t *block) {
   assert(block != NULL);
   return block->header & 1;
 }
@@ -155,14 +172,14 @@ block_t *search_for_block_of_size(int class, size_t desired_size) {
 
 void list_push(block_t *block) {
   assert(block != NULL);
-  assert(!is_block_allocated(block));
+  assert(!block_is_allocated(block));
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
   int list_index = find_list_for_size(get_size(block));
   if (heapp[list_index] == NULL) {
     heapp[list_index] = block;
   } else {
-    assert(!is_block_allocated(heapp[list_index]));
+    assert(!block_is_allocated(heapp[list_index]));
     set_next(block, heapp[list_index]);
     heapp[list_index] = block;
   }
@@ -191,7 +208,7 @@ int heap_size() {
   return size;
 }
 
-bool is_in_heap(block_t *block) {
+bool heap_contains(block_t *block) {
   for (int i = 0; i < CLASSES_N; i++) {
     block_t *head = list_get_first(i);
     for (; head != NULL;) {
@@ -248,7 +265,7 @@ int mm_init(void) {
     return -1;
 
   (void)block_position;
-  (void)is_block_allocated;
+  (void)block_is_allocated;
   for (int i = 0; i < CLASSES_N; i++) {
     heapp[i] = NULL;
   }
@@ -307,14 +324,18 @@ void *malloc(size_t size) {
   const size_t desired_size = size;
   (void)desired_size;
   debug("%u MALLOC %ld ", malloc_counter, size);
-  size = round_up(sizeof(block_t) + size);
+  size = round_up(sizeof(block_t) +    /// header and next
+                  size +               /// payload
+                  sizeof(block_header) /// footer
+
+  );
   block_t *block = find_block(size);
 
   //  search_for_block((block_t *)0x800000000);
   assert(get_size(block) >= desired_size);
-  assert(is_block_allocated(block));
+  assert(block_is_allocated(block));
   assert(get_next(block) == NULL);
-  assert(!is_in_heap(block));
+  assert(!heap_contains(block));
   update_sizes();
   return block->payload;
 }
@@ -330,11 +351,11 @@ void free(void *ptr) {
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
   debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
-  assert(!is_in_heap(block));
+  assert(!heap_contains(block));
   assert(get_size(block) > 0);
   assert(get_size(block) % 2 == 0);
   assert(get_next(block) == NULL);
-  assert(is_block_allocated(block));
+  assert(block_is_allocated(block));
 
   int list_index = find_list_for_size(get_size(block));
   int previous_length = free_length(list_get_first(list_index));
@@ -401,7 +422,7 @@ void *calloc(size_t nmemb, size_t size) {
 
 void validate_list(block_t *list) {
   while (list != NULL) {
-    assert(!is_block_allocated(list));
+    assert(!block_is_allocated(list));
     assert(get_size(list) > 0);
     assert(get_size(list) % 2 == 0);
     assert(((void *)get_next(list)) < mem_sbrk(0));
