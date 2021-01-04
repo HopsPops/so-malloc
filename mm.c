@@ -169,7 +169,9 @@ static block_t *block_resize(block_t *block, size_t size) {
 block_t *list_get_first(int class) {
   return heapp[class];
 }
-block_t *search_for_block_of_size(int class, size_t desired_size) {
+
+block_t *list_first_fit(int class, size_t desired_size) {
+
   if (heapp[class] == NULL) {
     return NULL;
   }
@@ -189,6 +191,17 @@ block_t *search_for_block_of_size(int class, size_t desired_size) {
     current = next;
   }
   return next;
+}
+
+block_t *search_for_block_of_size(size_t desired_size) {
+  int class = find_list_for_size(desired_size);
+  for (int i = class; i < CLASSES_N; i++) {
+    block_t *block_found = list_first_fit(i, desired_size);
+    if (block_found != NULL) {
+      return block_found;
+    }
+  }
+  return NULL;
 }
 
 void list_push(block_t *block) {
@@ -305,7 +318,6 @@ block_t *allocate_new_block(size_t size) {
 
 block_t *split_block(block_t *block, size_t desired_size) {
   (void)block_resize;
-  //  return NULL;
   assert((get_size(block) - desired_size) >= 0);
   if ((get_size(block) - desired_size) <= MINIMAL_BLOCK_SIZE) {
     return NULL;
@@ -323,7 +335,7 @@ block_t *find_block(size_t size) {
   (void)previous_length;
   const int hsize = heap_size();
   (void)hsize;
-  block_t *block = search_for_block_of_size(list_index, size);
+  block_t *block = search_for_block_of_size(size);
   assert(block_position(list_get_first(list_index), block, 0) == -1);
   if (block == NULL) {
     block = allocate_new_block(size);
@@ -340,8 +352,8 @@ block_t *find_block(size_t size) {
     assert(heap_size() == hsize);
   }
   set_header(block, -1, true, NULL);
-  assert(free_length(list_get_first(list_index)) <=
-         previous_length - (splitted_block == NULL ? 1 : 0));
+//  assert(free_length(list_get_first(list_index)) <=
+//         previous_length - (splitted_block == NULL ? 1 : 0));
   debug("FOUND %p PAYLOAD %p\n", block, block->payload);
   return block;
 }
