@@ -39,15 +39,50 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-typedef struct {
+uint32_t free_counter = 0;
+uint32_t malloc_counter = 0;
+
+struct block_t {
   int32_t header;
+  struct block_t *next;
   /*
    * We don't know what the size of the payload will be, so we will
    * declare it as a zero-length array.  This allow us to obtain a
    * pointer to the start of the payload.
    */
   uint8_t payload[];
-} block_t;
+};
+typedef struct block_t block_t;
+
+// struct block_entry {
+//  struct block_entry *previous;
+//  struct block_entry *next;
+//  block_t *block;
+//};
+// typedef struct block_entry block_entry;
+
+// block_entry *free_blocks;
+// block_entry *used_blocks;
+
+const int CLASSES[] = {2,  4,   6,   8,   10,   12,   14,   16, 32,
+                       64, 128, 256, 512, 1024, 2048, 4096, 0};
+
+#define CLASSES_N (sizeof(CLASSES) / sizeof(typeof(*CLASSES)))
+static struct block_t *heapp[CLASSES_N] = {NULL};
+static int sizes[CLASSES_N] = {0};
+//#define MAGIC ((void *)NULL)
+#define MAGIC ((void *)0xCAFEBABE)
+
+int find_list_for_size(size_t size) {
+  int i = 0;
+  while (CLASSES[i + 1]) {
+    if (CLASSES[i] >= size) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
 
 static size_t round_up(size_t size) {
   return (size + ALIGNMENT - 1) & -ALIGNMENT;
@@ -57,19 +92,229 @@ static size_t get_size(block_t *block) {
   return block->header & -2;
 }
 
-static void set_header(block_t *block, size_t size, bool is_allocated) {
+static block_t *get_next(block_t *block) {
+  assert(block != NULL);
+  return block->next;
+}
+
+bool has_cycle(block_t *list) {
+  return false;
+  block_t *tail = list;
+  block_t *head = list;
+  while (tail != NULL && head != NULL && get_next(head)) {
+    tail = get_next(tail);
+    head = get_next(get_next(head));
+    if (tail == head) {
+      printf("CYCLE DETECTED %p\n", tail);
+      fflush(NULL);
+      return true;
+    }
+  }
+  return false;
+}
+
+// static size_t get_footer(block_t *block) {
+//  return
+//}
+
+static void set_next(block_t *block, block_t *next) {
+  assert(block != next);
+  //  printf("SET NEXT %p\n", next);
+  //  fflush(NULL);
+  block->next = next;
+}
+static void set_header(block_t *block, size_t size, bool is_allocated,
+                       block_t *next) {
+  assert(block != NULL);
+  assert(size == -1 || size > 0);
+  if (size == -1) {
+    size = get_size(block);
+  }
   block->header = size | is_allocated;
+  assert(((void *)next) < mem_sbrk(0));
+  set_next(block, next);
+  //  block->magic = (int64_t)MAGIC;
+}
+
+static bool is_block_allocated(block_t *block) {
+  assert(block != NULL);
+  return block->header & 1;
+}
+
+block_t *list_get_first(int class) {
+  return heapp[class];
+}
+block_t *search_for_block_of_size(int class, size_t desired_size) {
+  if (heapp[class] == NULL) {
+    return NULL;
+  }
+  block_t *current = heapp[class];
+  if (get_size(current) >= desired_size) {
+    heapp[class] = get_next(current);
+    set_next(current, NULL);
+    return current;
+  }
+  block_t *next = get_next(current);
+  for (; next != NULL; next = get_next(current)) {
+    if (get_size(next) >= desired_size) {
+      set_next(current, get_next(next));
+      set_next(next, NULL);
+      break;
+    }
+    current = next;
+  }
+  return next;
+}
+
+void list_push(block_t *block) {
+  assert(block != NULL);
+  //  assert(block->next == MAGIC);
+  assert(!is_block_allocated(block));
+  assert(get_size(block) > 0);
+  assert(get_next(block) == NULL);
+  int list_index = find_list_for_size(get_size(block));
+  if (heapp[list_index] == NULL) {
+    heapp[list_index] = block;
+  } else {
+    assert(!is_block_allocated(heapp[list_index]));
+    //    block->next = heapp[list_index];
+    set_next(block, heapp[list_index]);
+    heapp[list_index] = block;
+  }
+  assert(!has_cycle(heapp[list_index]));
+}
+
+int block_position(block_t *list, block_t *block, int from) {
+  for (int p = 0; list != NULL; p++) {
+    if (list == block && p >= from) {
+      return p;
+    }
+    list = get_next(list);
+  }
+  return -1;
+}
+
+int heap_size() {
+  int size = 0;
+  for (int i = 0; i < CLASSES_N; i++) {
+    block_t *head = list_get_first(i);
+
+    for (; head != NULL; size++) {
+      head = get_next(head);
+    }
+  }
+  return size;
+}
+
+bool is_in_heap(block_t *block) {
+  for (int i = 0; i < CLASSES_N; i++) {
+    block_t *head = list_get_first(i);
+    for (; head != NULL;) {
+      if (head == block) {
+        //        return true;
+        assert(false);
+      }
+      head = get_next(head);
+    }
+  }
+  return false;
+}
+
+void search_for_block(block_t *block) {
+  for (int i = 0; i < CLASSES_N; i++) {
+    block_t *head = list_get_first(i);
+
+    for (int j = 0; head != NULL; j++) {
+      if (head == block) {
+        printf("FOUND in [%d] at pos: %d\n", i, j);
+      }
+      head = get_next(head);
+    }
+  }
+}
+
+block_t *pointer_to_block(void *ptr) {
+  return (block_t *)((int8_t *)ptr -
+                     (sizeof(int64_t) + sizeof(struct block_t *)));
+}
+
+int free_length(block_t *list) {
+  int i = 0;
+  while (list != NULL) {
+    i++;
+    list = get_next(list);
+    //    assert(list != NULL);
+  }
+  return i;
+}
+
+void update_sizes() {
+  for (int i = 0; i < CLASSES_N; i++) {
+    block_t *head = list_get_first(i);
+    sizes[i] = free_length(head);
+  }
 }
 
 /*
  * mm_init - Called when a new trace starts.
  */
 int mm_init(void) {
+  printf("INIT\n");
+  //  printf("SIZE: %d\n", find_list_for_size(3));
+  //  fflush(NULL);
   /* Pad heap start so first payload is at ALIGNMENT. */
   if ((long)mem_sbrk(ALIGNMENT - offsetof(block_t, payload)) < 0)
     return -1;
 
+  (void)block_position;
+  for(int i = 0; i < CLASSES_N; i++) {
+    heapp[i] = NULL;
+  }
+
   return 0;
+}
+
+block_t *allocate_new_block(size_t size) {
+  printf("MEMBRK %p\n", mem_sbrk(0));
+  block_t *block = mem_sbrk(size);
+  if ((long)block < 0)
+    return NULL;
+
+  set_header(block, size, true, NULL);
+  return block;
+}
+
+block_t *split_block(block_t *block, size_t desired_size) {
+  return NULL;
+}
+
+block_t *find_block(size_t size) {
+  int list_index = find_list_for_size(size);
+  //  printf("list: %d, size: %ld\n", list_index, size);
+  int previous_length = free_length(list_get_first(list_index));
+  const int hsize = heap_size();
+  block_t *block = search_for_block_of_size(list_index, size);
+  assert(block_position(list_get_first(list_index), block, 0) == -1);
+  if (block == NULL) {
+    block = allocate_new_block(size);
+    printf("ALLOCATED %p PAYLOAD %p\n", block, block->payload);
+    fflush(NULL);
+    assert(get_next(block) == NULL);
+    assert(get_size(block) >= size);
+    return block;
+  }
+  assert(heap_size() == (hsize - 1));
+  assert(get_next(block) == NULL);
+  block_t *splitted_block = split_block(block, size);
+  if (splitted_block != NULL) {
+    /// TODO
+    //    heapp[list_index] = block->next;
+  }
+  set_header(block, -1, true, NULL);
+  assert(free_length(list_get_first(list_index)) == previous_length - 1);
+  printf("FOUND %p PAYLOAD %p\n", block, block->payload);
+  fflush(NULL);
+  return block;
 }
 
 /*
@@ -77,12 +322,20 @@ int mm_init(void) {
  *      Always allocate a block whose size is a multiple of the alignment.
  */
 void *malloc(size_t size) {
+  malloc_counter++;
+  assert(size > 0);
+  const size_t desired_size = size;
+  printf("%u MALLOC %ld ", malloc_counter, size);
+  fflush(NULL);
   size = round_up(sizeof(block_t) + size);
-  block_t *block = mem_sbrk(size);
-  if ((long)block < 0)
-    return NULL;
+  block_t *block = find_block(size);
 
-  set_header(block, size, true);
+//  search_for_block((block_t *)0x800000000);
+  assert(get_size(block) >= desired_size);
+  assert(is_block_allocated(block));
+  assert(get_next(block) == NULL);
+  assert(!is_in_heap(block));
+  update_sizes();
   return block->payload;
 }
 
@@ -91,6 +344,25 @@ void *malloc(size_t size) {
  *      Computers have big memories; surely it won't be a problem.
  */
 void free(void *ptr) {
+  free_counter++;
+  const int hsize = heap_size();
+  assert(ptr != NULL);
+  block_t *block = pointer_to_block(ptr);
+  printf("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
+  assert(!is_in_heap(block));
+  fflush(NULL);
+  assert(get_size(block) > 0);
+  assert(get_size(block) % 2 == 0);
+  assert(get_next(block) == NULL);
+  assert(is_block_allocated(block));
+
+  int list_index = find_list_for_size(get_size(block));
+  int previous_length = free_length(list_get_first(list_index));
+  set_header(block, -1, false, NULL);
+  list_push(block);
+  assert(heap_size() == (hsize + 1));
+  assert(free_length(list_get_first(list_index)) == (previous_length + 1));
+  update_sizes();
 }
 
 /*
@@ -98,6 +370,11 @@ void free(void *ptr) {
  *      copying its data, and freeing the old block.
  **/
 void *realloc(void *old_ptr, size_t size) {
+  {
+    block_t *block = pointer_to_block(old_ptr);
+    printf("REALLOC %p %p %ld\n", old_ptr, block, get_size(block));
+    fflush(NULL);
+  }
   /* If size == 0 then this is just free, and we return NULL. */
   if (size == 0) {
     free(old_ptr);
@@ -131,6 +408,10 @@ void *realloc(void *old_ptr, size_t size) {
  * calloc - Allocate the block and set it to zero.
  */
 void *calloc(size_t nmemb, size_t size) {
+  {
+    printf("CALLOC ");
+    fflush(NULL);
+  }
   size_t bytes = nmemb * size;
   void *new_ptr = malloc(bytes);
 
@@ -141,8 +422,25 @@ void *calloc(size_t nmemb, size_t size) {
   return new_ptr;
 }
 
+void validate_list(block_t *list) {
+  while (list != NULL) {
+    assert(!is_block_allocated(list));
+    assert(get_size(list) > 0);
+    assert(get_size(list) % 2 == 0);
+    assert(((void *)get_next(list)) < mem_sbrk(0));
+    assert(!has_cycle(list));
+    list = list->next;
+  }
+}
+
 /*
  * mm_checkheap - So simple, it doesn't need a checker!
  */
 void mm_checkheap(int verbose) {
+  //  printf("MM_CHECKHEAP\n");
+  //  fflush(NULL);
+  for (int i = 0; i < CLASSES_N; i++) {
+    validate_list(heapp[i]);
+  }
+  update_sizes();
 }
