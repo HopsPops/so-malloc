@@ -39,21 +39,25 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
+#define DEBUG
+#ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
-//#define debug(...)
-//#undef assert
-//#define assert(...)
+#else
+#define debug(...)
+#undef assert
+#define assert(...)
+#endif
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
 uint32_t split_counter = 0;
 
-typedef int32_t block_header;
-//typedef block_header block_footer;
+typedef uint32_t block_header;
+// typedef block_header block_footer;
 
 struct block_t {
   block_header header;
-  struct block_t *next;
+  //  struct block_t *next;
   /*
    * We don't know what the size of the payload will be, so we will
    * declare it as a zero-length array.  This allow us to obtain a
@@ -63,8 +67,8 @@ struct block_t {
 };
 typedef struct block_t block_t;
 
-const int CLASSES[] = {2,  4,   6,   8,   10,   12,   14,   16, 32,
-                       64, 128, 256, 512, 1024, 2048, 4096, 0};
+const int CLASSES[] = {8,   10,  12,  14,   16,   32,   64,
+                       128, 256, 512, 1024, 2048, 4096, 0};
 
 #define MINIMAL_PAYLOAD_SIZE CLASSES[0]
 #define MINIMAL_BLOCK_SIZE (sizeof(block_t) + MINIMAL_PAYLOAD_SIZE)
@@ -96,7 +100,7 @@ static size_t round_up(size_t size) {
 static block_header *get_header(block_t *block) {
   return &block->header;
 }
-//static block_footer *get_footer(block_t *block) {
+// static block_footer *get_footer(block_t *block) {
 //  block_footer *footerp =
 //    (block_footer *)(block_end(block) - sizeof(block_footer));
 //
@@ -104,7 +108,7 @@ static block_header *get_header(block_t *block) {
 //}
 
 static size_t get_size(block_t *block) {
-//  assert(*get_header(block) == *get_footer(block));
+  //  assert(*get_header(block) == *get_footer(block));
   return *get_header(block) & -2;
 }
 
@@ -112,9 +116,19 @@ static size_t get_size(block_t *block) {
 //  return *get_footer(block) & -2;
 //}
 
+static bool block_is_allocated(block_t *block) {
+  assert(block != NULL);
+  return block->header & 1;
+}
+#define GET_NEXT(block) (*((block_t **)&block->payload))
 static block_t *get_next(block_t *block) {
   assert(block != NULL);
-  return block->next;
+  assert(((int64_t)GET_NEXT(block)) % 2 == 0);
+  block_t *next = GET_NEXT(block);
+  if (block_is_allocated(block)) {
+    assert(next == NULL);
+  }
+  return next;
 }
 
 /*static block_t *list_last(block_t *list) {
@@ -142,7 +156,12 @@ bool list_has_cycle(block_t *list) {
 
 static void set_next(block_t *block, block_t *next) {
   assert(block != next);
-  block->next = next;
+  if (next != NULL) {
+    assert(!block_is_allocated(block));
+  }
+  block_t **payload = (block_t **)&block->payload;
+  *payload = next;
+  assert(GET_NEXT(block) == next);
 }
 static void set_header(block_t *block, size_t size, bool is_allocated,
                        block_t *next) {
@@ -152,15 +171,10 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
     size = get_size(block);
   }
   *get_header(block) = size | is_allocated;
-//  *get_footer(block) = size | is_allocated;
-//  assert(*get_header(block) == *get_footer(block));
+  //  *get_footer(block) = size | is_allocated;
+  //  assert(*get_header(block) == *get_footer(block));
   assert(((void *)next) < mem_sbrk(0));
   set_next(block, next);
-}
-
-static bool block_is_allocated(block_t *block) {
-  assert(block != NULL);
-  return block->header & 1;
 }
 
 static block_t *block_resize(block_t *block, size_t size) {
@@ -254,7 +268,7 @@ block_t *list_find_coalescable_block(block_t **out_lower_bound,
                                      size_t *out_cluster_size, block_t *list,
                                      size_t desired_size) {
   const block_t *original_list = list;
-  (void) original_list;
+  (void)original_list;
   block_t *curr = NULL;
   size_t cluster_size = -1;
   while (list != NULL) {
@@ -323,7 +337,7 @@ void list_push(block_t *block) {
   assert(get_next(block) == NULL);
   const int list_index = find_list_for_size(get_size(block));
   const int lsize = free_length(list_get_first(list_index));
-  (void) lsize;
+  (void)lsize;
   if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
   } else {
@@ -399,8 +413,7 @@ void search_for_block(block_t *block) {
 }
 
 block_t *pointer_to_block(void *ptr) {
-  return (block_t *)((int8_t *)ptr -
-                     (sizeof(int64_t) + sizeof(struct block_t *)));
+  return (block_t *)((int8_t *)ptr - (sizeof(struct block_t)));
 }
 
 void update_sizes() {
@@ -413,13 +426,11 @@ void update_sizes() {
 /*
  * mm_init - Called when a new trace starts.
  */
-int mm_init(void) {
+int mm_init() {
   /* Pad heap start so first payload is at ALIGNMENT. */
   if ((long)mem_sbrk(ALIGNMENT - offsetof(block_t, payload)) < 0)
     return -1;
 
-  (void)block_position;
-  (void)block_is_allocated;
   for (int i = 0; i < CLASSES_N; i++) {
     heapp[i] = NULL;
   }
@@ -441,8 +452,9 @@ block_t *heap_try_to_coalesce(size_t desired_size) {
       &lower_bound, &upper_bound, &n, &cluster_size, list, desired_size);
 
     if (coalescable != NULL) {
+
       const int lsize = free_length(list);
-      (void) lsize;
+      (void)lsize;
       //      block_coalesce(coalescable, desired_size);
       set_header(coalescable, cluster_size, false, NULL);
       debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n,
@@ -471,7 +483,7 @@ block_t *allocate_new_block(size_t size) {
   if ((long)block < 0)
     return NULL;
 
-  set_header(block, size, true, NULL);
+  set_header(block, size, false, NULL);
   return block;
 }
 
@@ -507,6 +519,7 @@ block_t *find_block(size_t size) {
     debug("ALLOCATED %p PAYLOAD %p\n", block, block->payload);
     assert(get_next(block) == NULL);
     assert(get_size(block) >= size);
+    set_header(block, -1, true, NULL);
     return block;
   }
   //  assert(heap_size() == (hsize - 1));
@@ -533,9 +546,9 @@ void *malloc(size_t size) {
   const size_t desired_size = size;
   (void)desired_size;
   debug("%u MALLOC %ld ", malloc_counter, size);
-  size = round_up(sizeof(block_t) +    /// header and next
-                  size                /// payload
-//                 + sizeof(block_header) /// footer
+  size = round_up(sizeof(block_t) + /// header and next
+                  size              /// payload
+                  //                 + sizeof(block_header) /// footer
 
   );
   block_t *block = find_block(size);
@@ -563,8 +576,8 @@ void free(void *ptr) {
   assert(!heap_contains(block));
   assert(get_size(block) > 0);
   assert(get_size(block) % 2 == 0);
-  assert(get_next(block) == NULL);
   assert(block_is_allocated(block));
+//  assert(GET_NEXT(block) == NULL);
 
   int list_index = find_list_for_size(get_size(block));
   int previous_length = free_length(list_get_first(list_index));
@@ -650,7 +663,7 @@ void validate_list(block_t *list) {
     assert(((void *)get_next(list)) < mem_sbrk(0));
     //    assert(!list_has_cycle(list));
     assert(list_is_sorted(list));
-    list = list->next;
+    list = get_next(list);
   }
 }
 
@@ -658,6 +671,9 @@ void validate_list(block_t *list) {
  * mm_checkheap - So simple, it doesn't need a checker!
  */
 void mm_checkheap(int verbose) {
+  if (mem_sbrk(0) >= (void *)(0x800019c90)) {
+    assert(((block_t *)(0x800019c90))->header != 2287038662);
+  }
   for (int i = 0; i < CLASSES_N; i++) {
     validate_list(heapp[i]);
   }
