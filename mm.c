@@ -125,7 +125,7 @@ static block_t *get_next(block_t *block) {
 }*/
 
 bool list_has_cycle(block_t *list) {
-  return false;
+  //  return false;
   block_t *tail = list;
   block_t *head = list;
   while (tail != NULL && head != NULL && get_next(head)) {
@@ -176,6 +176,16 @@ static block_t *block_resize(block_t *block, size_t size) {
 
 block_t *list_get_first(int class) {
   return heapp[class];
+}
+
+bool list_contains(block_t *list, block_t *search_for) {
+  while (list != NULL) {
+    if (list == search_for) {
+      return true;
+    }
+    list = get_next(list);
+  }
+  return false;
 }
 
 block_t *list_first_fit(int class, size_t desired_size) {
@@ -241,11 +251,13 @@ static bool block_is_adjacent(block_t *block_pred, block_t *block_succ) {
 
 block_t *list_find_coalescable_block(block_t **out_lower_bound,
                                      block_t **out_upper_bound, int32_t *out_n,
-                                     block_t *list, size_t desired_size) {
+                                     size_t *out_cluster_size, block_t *list,
+                                     size_t desired_size) {
   const block_t *original_list = list;
   block_t *curr = NULL;
+  size_t cluster_size = -1;
   while (list != NULL) {
-    size_t cluster_size = get_size(list);
+    cluster_size = get_size(list);
     *out_n = 1;
     for (curr = list; true; curr = get_next(curr)) {
       if (cluster_size >= desired_size) {
@@ -268,8 +280,12 @@ block_t *list_find_coalescable_block(block_t **out_lower_bound,
       }
     }
   }
+
 end:
+
   if (list != NULL) {
+    *out_cluster_size = cluster_size;
+    assert(*out_cluster_size >= desired_size);
     assert(*out_n > 0);
     assert(get_next(curr) == *out_upper_bound);
     if (*out_lower_bound == NULL) {
@@ -285,8 +301,18 @@ end:
     *out_n = 0;
     *out_upper_bound = NULL;
     *out_lower_bound = NULL;
+    *out_cluster_size = 0;
   }
   return list;
+}
+
+int free_length(block_t *list) {
+  int i = 0;
+  while (list != NULL) {
+    i++;
+    list = get_next(list);
+  }
+  return i;
 }
 
 void list_push(block_t *block) {
@@ -295,6 +321,7 @@ void list_push(block_t *block) {
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
   int list_index = find_list_for_size(get_size(block));
+  const int lsize = free_length(list_get_first(list_index));
   if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
   } else {
@@ -315,7 +342,8 @@ void list_push(block_t *block) {
       set_next(block, next);
     }
   }
-  assert(!list_has_cycle(heapp[list_index]));
+  //  assert(!list_has_cycle(heapp[list_index]));
+  assert(free_length(list_get_first(list_index)) == (lsize + 1));
   assert(list_is_sorted(heapp[list_index]));
 }
 
@@ -373,15 +401,6 @@ block_t *pointer_to_block(void *ptr) {
                      (sizeof(int64_t) + sizeof(struct block_t *)));
 }
 
-int free_length(block_t *list) {
-  int i = 0;
-  while (list != NULL) {
-    i++;
-    list = get_next(list);
-  }
-  return i;
-}
-
 void update_sizes() {
   for (int i = 0; i < CLASSES_N; i++) {
     block_t *head = list_get_first(i);
@@ -405,22 +424,44 @@ int mm_init(void) {
 
   return 0;
 }
-/*
-static void block_coalesce(block_t *block, size_t to_size) {
-}
+// static void block_coalesce(block_t *block, size_t to_size) {
+//}
 
 block_t *heap_try_to_coalesce(size_t desired_size) {
-  const initial_class = find_list_for_size(desired_size);
+  const int initial_class = find_list_for_size(desired_size);
   for (int class = initial_class; class >= 0; --class) {
     block_t *lower_bound = NULL;
     block_t *upper_bound = NULL;
+    int32_t n = -1;
+    size_t cluster_size = -1;
+    block_t *list = list_get_first(class);
     block_t *coalescable = list_find_coalescable_block(
-      &next_after_cluster, list_get_first(class), desired_size);
+      &lower_bound, &upper_bound, &n, &cluster_size, list, desired_size);
+
     if (coalescable != NULL) {
+      const int lsize = free_length(list);
+      //      block_coalesce(coalescable, desired_size);
+      set_header(coalescable, cluster_size, false, NULL);
+      debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n,
+            cluster_size);
+      if (lower_bound == NULL) {
+        heapp[class] = upper_bound;
+      } else {
+        assert(list_contains(list_get_first(class), lower_bound));
+        set_next(lower_bound, upper_bound);
+      }
+      assert(!list_has_cycle(list_get_first(class)));
+      if (upper_bound != NULL) {
+        assert(list_contains(list_get_first(class), upper_bound));
+      }
+      assert(!list_contains(list_get_first(class), coalescable));
+      assert(free_length(list_get_first(class)) == (lsize - n));
+      assert(get_size(coalescable) >= desired_size);
     }
+    return coalescable;
   }
+  return NULL;
 }
- */
 
 block_t *allocate_new_block(size_t size) {
   block_t *block = mem_sbrk(size);
@@ -451,9 +492,12 @@ block_t *find_block(size_t size) {
   int list_index = find_list_for_size(size);
   int previous_length = free_length(list_get_first(list_index));
   (void)previous_length;
-  const int hsize = heap_size();
-  (void)hsize;
+  //  const int hsize = heap_size();
+  //  (void)hsize;
   block_t *block = search_for_block_of_size(size);
+  if (block == NULL) {
+    block = heap_try_to_coalesce(size);
+  }
   assert(block_position(list_get_first(list_index), block, 0) == -1);
   if (block == NULL) {
     block = allocate_new_block(size);
@@ -462,12 +506,12 @@ block_t *find_block(size_t size) {
     assert(get_size(block) >= size);
     return block;
   }
-  assert(heap_size() == (hsize - 1));
+  //  assert(heap_size() == (hsize - 1));
   assert(get_next(block) == NULL);
   block_t *splitted_block = split_block(block, size);
   if (splitted_block != NULL) {
     list_push(splitted_block);
-    assert(heap_size() == hsize);
+    //    assert(heap_size() == hsize);
   }
   set_header(block, -1, true, NULL);
   //  assert(free_length(list_get_first(list_index)) <=
@@ -524,17 +568,18 @@ void free(void *ptr) {
   (void)previous_length;
   set_header(block, -1, false, NULL);
   list_push(block);
-  {
+  /*{
     int32_t n = -1;
+    size_t cluster_size = -1;
     block_t *upper_bound = NULL;
     block_t *lower_bound = NULL;
     block_t *coalescable = list_find_coalescable_block(
-      &lower_bound, &upper_bound, &n, list_get_first(list_index),
+      &lower_bound, &upper_bound, &n, &cluster_size, list_get_first(list_index),
       1 * get_size(block));
     if (coalescable != NULL) {
       debug("COALESCABLE %p %d\n", coalescable, n);
     }
-  }
+  }*/
   assert(heap_size() == (hsize + 1));
   assert(free_length(list_get_first(list_index)) == (previous_length + 1));
   update_sizes();
@@ -600,7 +645,7 @@ void validate_list(block_t *list) {
     assert(get_size(list) > 0);
     assert(get_size(list) % 2 == 0);
     assert(((void *)get_next(list)) < mem_sbrk(0));
-    assert(!list_has_cycle(list));
+    //    assert(!list_has_cycle(list));
     assert(list_is_sorted(list));
     list = list->next;
   }
