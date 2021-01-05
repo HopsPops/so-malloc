@@ -39,7 +39,7 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-//#define DEBUG
+#define DEBUG
 #ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 #else
@@ -53,11 +53,9 @@ uint32_t malloc_counter = 0;
 uint32_t split_counter = 0;
 
 typedef uint32_t block_header;
-// typedef block_header block_footer;
 
-struct block_t {
+struct __attribute__((__packed__)) block_t {
   block_header header;
-  //  struct block_t *next;
   /*
    * We don't know what the size of the payload will be, so we will
    * declare it as a zero-length array.  This allow us to obtain a
@@ -67,8 +65,10 @@ struct block_t {
 };
 typedef struct block_t block_t;
 
-const int CLASSES[] = {8,   10,  12,  14,   16,   32,   64,
-                       128, 256, 512, 1024, 2048, 4096, 0};
+const int CLASSES[] = {4,     8,         10,        12,        14,        16,
+                       22,    28,        32,        64,        128,       256,
+                       512,   1024,      2048,      4096,      8192,      16384,
+                       65536, 2 * 65536, 3 * 65536, 4 * 65536, 5 * 65536, 0};
 
 #define MINIMAL_PAYLOAD_SIZE CLASSES[0]
 #define MINIMAL_BLOCK_SIZE (sizeof(block_t) + MINIMAL_PAYLOAD_SIZE)
@@ -298,7 +298,6 @@ block_t *list_find_coalescable_block(block_t **out_lower_bound,
   }
 
 end:
-
   if (list != NULL) {
     *out_cluster_size = cluster_size;
     assert(*out_cluster_size >= desired_size);
@@ -322,7 +321,31 @@ end:
   return list;
 }
 
-int free_length(block_t *list) {
+block_t *list_find_largest_coalescable_block(
+  block_t **out_lower_bound, block_t **out_upper_bound, int32_t *out_n,
+  size_t *out_cluster_size, block_t *list, size_t desired_size) {
+  block_t *coalescable = list;
+  size_t previous_size = 0;
+  block_t *result = NULL;
+  do {
+    block_t *lower_bound = NULL;
+    block_t *upper_bound = NULL;
+    int32_t n = -1;
+    size_t cluster_size = -1;
+    coalescable = list_find_coalescable_block(
+      &lower_bound, &upper_bound, &n, &cluster_size, list, desired_size);
+    if (cluster_size >= previous_size) {
+      result = coalescable;
+      *out_lower_bound = lower_bound;
+      *out_upper_bound = upper_bound;
+      *out_n = n;
+      *out_cluster_size = cluster_size;
+    }
+  } while (coalescable != NULL);
+  return result;
+}
+
+int list_length(block_t *list) {
   int i = 0;
   while (list != NULL) {
     i++;
@@ -338,7 +361,7 @@ void list_push(block_t *block) {
   assert(get_next(block) == NULL);
   const int list_index = find_list_for_size(get_size(block));
 #ifdef DEBUG
-  const int lsize = free_length(list_get_first(list_index));
+  const int lsize = list_length(list_get_first(list_index));
 #endif
   if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
@@ -361,7 +384,7 @@ void list_push(block_t *block) {
     }
   }
   //  assert(!list_has_cycle(heapp[list_index]));
-  assert(free_length(list_get_first(list_index)) == (lsize + 1));
+  assert(list_length(list_get_first(list_index)) == (lsize + 1));
   assert(list_is_sorted(heapp[list_index]));
 }
 
@@ -421,7 +444,7 @@ block_t *pointer_to_block(void *ptr) {
 void update_sizes() {
   for (int i = 0; i < CLASSES_N; i++) {
     block_t *head = list_get_first(i);
-    sizes[i] = free_length(head);
+    sizes[i] = list_length(head);
   }
 }
 
@@ -439,8 +462,22 @@ int mm_init() {
 
   return 0;
 }
-// static void block_coalesce(block_t *block, size_t to_size) {
-//}
+static void block_coalesce(block_t *coalescable, int class,
+                           block_t *lower_bound, block_t *upper_bound,
+                           int32_t n, size_t cluster_size) {
+  set_header(coalescable, cluster_size, false, NULL);
+  debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n, cluster_size);
+  if (lower_bound == NULL) {
+    heapp[class] = upper_bound;
+  } else {
+    assert(list_contains(list_get_first(class), lower_bound));
+    set_next(lower_bound, upper_bound);
+  }
+  assert(!list_has_cycle(list_get_first(class)));
+  if (upper_bound != NULL) {
+    assert(list_contains(list_get_first(class), upper_bound));
+  }
+}
 
 block_t *heap_try_to_coalesce(size_t desired_size) {
   const int initial_class = find_list_for_size(desired_size);
@@ -455,29 +492,45 @@ block_t *heap_try_to_coalesce(size_t desired_size) {
 
     if (coalescable != NULL) {
 #ifdef DEBUG
-      const int lsize = free_length(list);
+      const int lsize = list_length(list);
 #endif
-      //      block_coalesce(coalescable, desired_size);
-      set_header(coalescable, cluster_size, false, NULL);
-      debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n,
-            cluster_size);
-      if (lower_bound == NULL) {
-        heapp[class] = upper_bound;
-      } else {
-        assert(list_contains(list_get_first(class), lower_bound));
-        set_next(lower_bound, upper_bound);
-      }
-      assert(!list_has_cycle(list_get_first(class)));
-      if (upper_bound != NULL) {
-        assert(list_contains(list_get_first(class), upper_bound));
-      }
+      block_coalesce(coalescable, class, lower_bound, upper_bound, n,
+                     cluster_size);
       assert(!list_contains(list_get_first(class), coalescable));
-      assert(free_length(list_get_first(class)) == (lsize - n));
+      assert(list_length(list_get_first(class)) == (lsize - n));
       assert(get_size(coalescable) >= desired_size);
     }
     return coalescable;
   }
   return NULL;
+}
+
+static void heap_cleanup() {
+  for (int class = 0; class < CLASSES_N - 1; class ++) {
+    for (int i = 0; true; i++) {
+      block_t *lower_bound = NULL;
+      block_t *upper_bound = NULL;
+      int32_t n = -1;
+      size_t cluster_size = -1;
+      block_t *list = list_get_first(class);
+      block_t *coalescable = list_find_coalescable_block(
+        &lower_bound, &upper_bound, &n, &cluster_size, list,
+        CLASSES[class + 1] - 1);
+      if (coalescable != NULL) {
+#ifdef DEBUG
+        const int lsize = list_length(list);
+#endif
+        debug("CLEANUP ");
+        block_coalesce(coalescable, class, lower_bound, upper_bound, n,
+                       cluster_size);
+        assert(!list_contains(list_get_first(class), coalescable));
+        assert(list_length(list_get_first(class)) == (lsize - n));
+        list_push(coalescable);
+      } else {
+        break;
+      }
+    }
+  }
 }
 
 block_t *allocate_new_block(size_t size) {
@@ -491,6 +544,9 @@ block_t *allocate_new_block(size_t size) {
 
 block_t *split_block(block_t *block, size_t desired_size) {
   assert((get_size(block) - desired_size) >= 0);
+  if (desired_size <= 16) {
+    return NULL;
+  }
   if ((get_size(block) - desired_size) <= MINIMAL_BLOCK_SIZE) {
     return NULL;
   }
@@ -508,7 +564,7 @@ block_t *split_block(block_t *block, size_t desired_size) {
 block_t *find_block(size_t size) {
 #ifdef DEBUG
   const int list_index = find_list_for_size(size);
-  const int previous_length = free_length(list_get_first(list_index));
+//  const int previous_length = list_length(list_get_first(list_index));
 #endif
   //  const int hsize = heap_size();
   //  (void)hsize;
@@ -533,7 +589,7 @@ block_t *find_block(size_t size) {
     //    assert(heap_size() == hsize);
   }
   set_header(block, -1, true, NULL);
-  //  assert(free_length(list_get_first(list_index)) <=
+  //  assert(list_length(list_get_first(list_index)) <=
   //         previous_length - (splitted_block == NULL ? 1 : 0));
   debug("FOUND %p PAYLOAD %p\n", block, block->payload);
   return block;
@@ -562,7 +618,12 @@ void *malloc(size_t size) {
   assert(block_is_allocated(block));
   assert(get_next(block) == NULL);
   assert(!heap_contains(block));
+#ifdef DEBUG
   update_sizes();
+#endif
+  if (malloc_counter % 100 == 0) {
+    heap_cleanup();
+  }
   return block->payload;
 }
 
@@ -584,7 +645,7 @@ void free(void *ptr) {
 #ifdef DEBUG
   const int hsize = heap_size();
   const int list_index = find_list_for_size(get_size(block));
-  const int previous_length = free_length(list_get_first(list_index));
+  const int previous_length = list_length(list_get_first(list_index));
 #endif
   set_header(block, -1, false, NULL);
   list_push(block);
@@ -601,7 +662,7 @@ void free(void *ptr) {
     }
   }*/
   assert(heap_size() == (hsize + 1));
-  assert(free_length(list_get_first(list_index)) == (previous_length + 1));
+  assert(list_length(list_get_first(list_index)) == (previous_length + 1));
 #ifdef DEBUG
   update_sizes();
 #endif
@@ -678,9 +739,6 @@ void validate_list(block_t *list) {
  * mm_checkheap - So simple, it doesn't need a checker!
  */
 void mm_checkheap(int verbose) {
-  if (mem_sbrk(0) >= (void *)(0x800019c90)) {
-    assert(((block_t *)(0x800019c90))->header != 2287038662);
-  }
   for (int i = 0; i < CLASSES_N; i++) {
     validate_list(heapp[i]);
   }
