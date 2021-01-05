@@ -65,10 +65,10 @@ struct __attribute__((__packed__)) block_t {
 };
 typedef struct block_t block_t;
 
-const int CLASSES[] = {4,     8,         10,        12,        14,        16,
-                       22,    28,        32,        64,        128,       256,
-                       512,   1024,      2048,      4096,      8192,      16384,
-                       65536, 2 * 65536, 3 * 65536, 4 * 65536, 5 * 65536, 0};
+const int CLASSES[] = {4,     8,         10,        12,        14,   16,
+                       22,    28,        32,        64,        128,  256,
+                       512,   1024,      2048,      4096,      8192, 16384,
+                       65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
 
 #define MINIMAL_PAYLOAD_SIZE CLASSES[0]
 #define MINIMAL_BLOCK_SIZE (sizeof(block_t) + MINIMAL_PAYLOAD_SIZE)
@@ -361,7 +361,7 @@ void list_push(block_t *block) {
   assert(get_next(block) == NULL);
   const int list_index = find_list_for_size(get_size(block));
 #ifdef DEBUG
-  const int lsize = list_length(list_get_first(list_index));
+//  const int lsize = list_length(list_get_first(list_index));
 #endif
   if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
@@ -379,12 +379,23 @@ void list_push(block_t *block) {
         root = get_next(root);
       }
       block_t *next = get_next(root);
-      set_next(root, block);
-      set_next(block, next);
+      if (next && block_is_adjacent(block, next)) {
+        size_t joint_size = get_size(block) + get_size(next);
+        debug("JOIN %p and %p, size: %ld+%ld=%ld\n", block, next,
+              get_size(block), get_size(next), joint_size);
+        block_t *next_next = get_next(next);
+        set_next(root, next_next);
+        set_header(block, joint_size, false, NULL);
+        list_push(block);
+      } else {
+
+        set_next(root, block);
+        set_next(block, next);
+      }
     }
   }
   //  assert(!list_has_cycle(heapp[list_index]));
-  assert(list_length(list_get_first(list_index)) == (lsize + 1));
+  //  assert(list_length(list_get_first(list_index)) == (lsize + 1));
   assert(list_is_sorted(heapp[list_index]));
 }
 
@@ -643,9 +654,9 @@ void free(void *ptr) {
   //  assert(GET_NEXT(block) == NULL);
 
 #ifdef DEBUG
-  const int hsize = heap_size();
-  const int list_index = find_list_for_size(get_size(block));
-  const int previous_length = list_length(list_get_first(list_index));
+//  const int hsize = heap_size();
+//  const int list_index = find_list_for_size(get_size(block));
+//  const int previous_length = list_length(list_get_first(list_index));
 #endif
   set_header(block, -1, false, NULL);
   list_push(block);
@@ -661,8 +672,8 @@ void free(void *ptr) {
       debug("COALESCABLE %p %d\n", coalescable, n);
     }
   }*/
-  assert(heap_size() == (hsize + 1));
-  assert(list_length(list_get_first(list_index)) == (previous_length + 1));
+//  assert(heap_size() == (hsize + 1));
+//  assert(list_length(list_get_first(list_index)) == (previous_length + 1));
 #ifdef DEBUG
   update_sizes();
 #endif
