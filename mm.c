@@ -223,12 +223,38 @@ bool list_is_sorted(block_t *list) {
   return true;
 }
 
-//block_t* list_find_coalescable_block(size_t desired_size) {
-//
-//  while() {
-//
-//  }
-//}
+static bool block_is_adjacent(block_t *block_pred, block_t *block_succ) {
+  assert(block_pred < block_succ);
+  assert(block_pred != NULL);
+  assert(block_succ != NULL);
+  void *pred_end = block_end(block_pred);
+  assert(((block_t *)pred_end) <= block_succ);
+  return pred_end == block_succ;
+}
+
+block_t *list_find_coalescable_block(block_t *list, size_t desired_size) {
+  while (list != NULL) {
+    size_t cluster_size = get_size(list);
+    for (block_t *curr = list; curr; curr = get_next(curr)) {
+      if (cluster_size >= desired_size) {
+        goto end;
+      }
+      block_t *next = get_next(curr);
+      if (next == NULL) {
+        list = NULL;
+        break;
+      }
+      if (block_is_adjacent(curr, next)) {
+        cluster_size += get_size(next);
+      } else {
+        list = next;
+        break;
+      }
+    }
+  }
+end:
+  return list;
+}
 
 void list_push(block_t *block) {
   assert(block != NULL);
@@ -236,7 +262,7 @@ void list_push(block_t *block) {
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
   int list_index = find_list_for_size(get_size(block));
-  if (heapp[list_index] == NULL) { ///adding to empty list
+  if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
   } else {
     assert(!block_is_allocated(heapp[list_index]));
@@ -449,6 +475,11 @@ void free(void *ptr) {
   (void)previous_length;
   set_header(block, -1, false, NULL);
   list_push(block);
+//  block_t *coalescable = list_find_coalescable_block(list_get_first(list_index),
+//                                                     4 * get_size(block));
+//  if (coalescable != NULL) {
+//    debug("COALESCABLE %p\n", coalescable);
+//  }
   assert(heap_size() == (hsize + 1));
   assert(free_length(list_get_first(list_index)) == (previous_length + 1));
   update_sizes();
