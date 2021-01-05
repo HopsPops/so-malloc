@@ -39,7 +39,7 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 #else
@@ -267,8 +267,9 @@ block_t *list_find_coalescable_block(block_t **out_lower_bound,
                                      block_t **out_upper_bound, int32_t *out_n,
                                      size_t *out_cluster_size, block_t *list,
                                      size_t desired_size) {
+#ifdef DEBUG
   const block_t *original_list = list;
-  (void)original_list;
+#endif
   block_t *curr = NULL;
   size_t cluster_size = -1;
   while (list != NULL) {
@@ -336,8 +337,9 @@ void list_push(block_t *block) {
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
   const int list_index = find_list_for_size(get_size(block));
+#ifdef DEBUG
   const int lsize = free_length(list_get_first(list_index));
-  (void)lsize;
+#endif
   if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
   } else {
@@ -452,9 +454,9 @@ block_t *heap_try_to_coalesce(size_t desired_size) {
       &lower_bound, &upper_bound, &n, &cluster_size, list, desired_size);
 
     if (coalescable != NULL) {
-
+#ifdef DEBUG
       const int lsize = free_length(list);
-      (void)lsize;
+#endif
       //      block_coalesce(coalescable, desired_size);
       set_header(coalescable, cluster_size, false, NULL);
       debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n,
@@ -488,13 +490,13 @@ block_t *allocate_new_block(size_t size) {
 }
 
 block_t *split_block(block_t *block, size_t desired_size) {
-  (void)block_resize;
   assert((get_size(block) - desired_size) >= 0);
   if ((get_size(block) - desired_size) <= MINIMAL_BLOCK_SIZE) {
     return NULL;
   }
-  size_t old_size = get_size(block);
-  (void)old_size;
+#ifdef DEBUG
+  const size_t old_size = get_size(block);
+#endif
   block_t *new_block = block_resize(block, desired_size);
   split_counter++;
   debug("%d SPLITTED %p=%ld into %ld and %ld sized blocks [%p]\n",
@@ -504,9 +506,10 @@ block_t *split_block(block_t *block, size_t desired_size) {
 }
 
 block_t *find_block(size_t size) {
-  int list_index = find_list_for_size(size);
-  int previous_length = free_length(list_get_first(list_index));
-  (void)previous_length;
+#ifdef DEBUG
+  const int list_index = find_list_for_size(size);
+  const int previous_length = free_length(list_get_first(list_index));
+#endif
   //  const int hsize = heap_size();
   //  (void)hsize;
   block_t *block = search_for_block_of_size(size);
@@ -543,8 +546,9 @@ block_t *find_block(size_t size) {
 void *malloc(size_t size) {
   malloc_counter++;
   assert(size > 0);
+#ifdef DEBUG
   const size_t desired_size = size;
-  (void)desired_size;
+#endif
   debug("%u MALLOC %ld ", malloc_counter, size);
   size = round_up(sizeof(block_t) + /// header and next
                   size              /// payload
@@ -568,8 +572,6 @@ void *malloc(size_t size) {
  */
 void free(void *ptr) {
   free_counter++;
-  const int hsize = heap_size();
-  (void)hsize;
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
   debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
@@ -577,11 +579,13 @@ void free(void *ptr) {
   assert(get_size(block) > 0);
   assert(get_size(block) % 2 == 0);
   assert(block_is_allocated(block));
-//  assert(GET_NEXT(block) == NULL);
+  //  assert(GET_NEXT(block) == NULL);
 
-  int list_index = find_list_for_size(get_size(block));
-  int previous_length = free_length(list_get_first(list_index));
-  (void)previous_length;
+#ifdef DEBUG
+  const int hsize = heap_size();
+  const int list_index = find_list_for_size(get_size(block));
+  const int previous_length = free_length(list_get_first(list_index));
+#endif
   set_header(block, -1, false, NULL);
   list_push(block);
   /*{
@@ -598,7 +602,9 @@ void free(void *ptr) {
   }*/
   assert(heap_size() == (hsize + 1));
   assert(free_length(list_get_first(list_index)) == (previous_length + 1));
+#ifdef DEBUG
   update_sizes();
+#endif
 }
 
 /*
@@ -607,8 +613,9 @@ void free(void *ptr) {
  **/
 void *realloc(void *old_ptr, size_t size) {
   {
+#ifdef DEBUG
     block_t *block = pointer_to_block(old_ptr);
-    (void)block;
+#endif
     debug("REALLOC %p %p %ld\n", old_ptr, block, get_size(block));
   }
   /* If size == 0 then this is just free, and we return NULL. */
