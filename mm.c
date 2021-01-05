@@ -49,7 +49,7 @@ uint32_t malloc_counter = 0;
 uint32_t split_counter = 0;
 
 typedef int32_t block_header;
-typedef block_header block_footer;
+//typedef block_header block_footer;
 
 struct block_t {
   block_header header;
@@ -96,15 +96,15 @@ static size_t round_up(size_t size) {
 static block_header *get_header(block_t *block) {
   return &block->header;
 }
-static block_footer *get_footer(block_t *block) {
-  block_footer *footerp =
-    (block_footer *)(block_end(block) - sizeof(block_footer));
-
-  return footerp;
-}
+//static block_footer *get_footer(block_t *block) {
+//  block_footer *footerp =
+//    (block_footer *)(block_end(block) - sizeof(block_footer));
+//
+//  return footerp;
+//}
 
 static size_t get_size(block_t *block) {
-  assert(*get_header(block) == *get_footer(block));
+//  assert(*get_header(block) == *get_footer(block));
   return *get_header(block) & -2;
 }
 
@@ -152,8 +152,8 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
     size = get_size(block);
   }
   *get_header(block) = size | is_allocated;
-  *get_footer(block) = size | is_allocated;
-  assert(*get_header(block) == *get_footer(block));
+//  *get_footer(block) = size | is_allocated;
+//  assert(*get_header(block) == *get_footer(block));
   assert(((void *)next) < mem_sbrk(0));
   set_next(block, next);
 }
@@ -254,6 +254,7 @@ block_t *list_find_coalescable_block(block_t **out_lower_bound,
                                      size_t *out_cluster_size, block_t *list,
                                      size_t desired_size) {
   const block_t *original_list = list;
+  (void) original_list;
   block_t *curr = NULL;
   size_t cluster_size = -1;
   while (list != NULL) {
@@ -320,8 +321,9 @@ void list_push(block_t *block) {
   assert(!block_is_allocated(block));
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
-  int list_index = find_list_for_size(get_size(block));
+  const int list_index = find_list_for_size(get_size(block));
   const int lsize = free_length(list_get_first(list_index));
+  (void) lsize;
   if (heapp[list_index] == NULL) { /// adding to empty list
     heapp[list_index] = block;
   } else {
@@ -440,6 +442,7 @@ block_t *heap_try_to_coalesce(size_t desired_size) {
 
     if (coalescable != NULL) {
       const int lsize = free_length(list);
+      (void) lsize;
       //      block_coalesce(coalescable, desired_size);
       set_header(coalescable, cluster_size, false, NULL);
       debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n,
@@ -531,8 +534,8 @@ void *malloc(size_t size) {
   (void)desired_size;
   debug("%u MALLOC %ld ", malloc_counter, size);
   size = round_up(sizeof(block_t) +    /// header and next
-                  size +               /// payload
-                  sizeof(block_header) /// footer
+                  size                /// payload
+//                 + sizeof(block_header) /// footer
 
   );
   block_t *block = find_block(size);
