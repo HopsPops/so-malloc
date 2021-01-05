@@ -39,9 +39,10 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-#define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
-//#undef assert
-//#define assert(...)
+//#define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
+#define debug(...)
+#undef assert
+#define assert(...)
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
@@ -175,6 +176,14 @@ block_t *list_first_fit(int class, size_t desired_size) {
   if (heapp[class] == NULL) {
     return NULL;
   }
+  //  else {
+  //    block_t *current = heapp[class];
+  //    assert(get_size(current) >= desired_size);
+  //    heapp[class] = get_next(current);
+  //    set_next(current, NULL);
+  //    return current;
+  //  }
+
   block_t *current = heapp[class];
   if (get_size(current) >= desired_size) {
     heapp[class] = get_next(current);
@@ -323,6 +332,7 @@ block_t *split_block(block_t *block, size_t desired_size) {
     return NULL;
   }
   size_t old_size = get_size(block);
+  (void)old_size;
   block_t *new_block = block_resize(block, desired_size);
   debug("SPLITTED %p=%ld into %ld and %ld sized blocks [%p]\n", block, old_size,
         get_size(block), get_size(new_block), new_block);
@@ -352,8 +362,8 @@ block_t *find_block(size_t size) {
     assert(heap_size() == hsize);
   }
   set_header(block, -1, true, NULL);
-//  assert(free_length(list_get_first(list_index)) <=
-//         previous_length - (splitted_block == NULL ? 1 : 0));
+  //  assert(free_length(list_get_first(list_index)) <=
+  //         previous_length - (splitted_block == NULL ? 1 : 0));
   debug("FOUND %p PAYLOAD %p\n", block, block->payload);
   return block;
 }
@@ -418,6 +428,7 @@ void free(void *ptr) {
 void *realloc(void *old_ptr, size_t size) {
   {
     block_t *block = pointer_to_block(old_ptr);
+    (void)block;
     debug("REALLOC %p %p %ld\n", old_ptr, block, get_size(block));
   }
   /* If size == 0 then this is just free, and we return NULL. */
