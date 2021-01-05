@@ -117,6 +117,13 @@ static block_t *get_next(block_t *block) {
   return block->next;
 }
 
+/*static block_t *list_last(block_t *list) {
+  while (get_next(list)) {
+    list = get_next(list);
+  }
+  return list;
+}*/
+
 bool list_has_cycle(block_t *list) {
   return false;
   block_t *tail = list;
@@ -232,11 +239,17 @@ static bool block_is_adjacent(block_t *block_pred, block_t *block_succ) {
   return pred_end == block_succ;
 }
 
-block_t *list_find_coalescable_block(block_t *list, size_t desired_size) {
+block_t *list_find_coalescable_block(block_t **out_lower_bound,
+                                     block_t **out_upper_bound, int32_t *out_n,
+                                     block_t *list, size_t desired_size) {
+  const block_t *original_list = list;
+  block_t *curr = NULL;
   while (list != NULL) {
     size_t cluster_size = get_size(list);
-    for (block_t *curr = list; curr; curr = get_next(curr)) {
+    *out_n = 1;
+    for (curr = list; true; curr = get_next(curr)) {
       if (cluster_size >= desired_size) {
+        *out_upper_bound = get_next(curr);
         goto end;
       }
       block_t *next = get_next(curr);
@@ -246,13 +259,33 @@ block_t *list_find_coalescable_block(block_t *list, size_t desired_size) {
       }
       if (block_is_adjacent(curr, next)) {
         cluster_size += get_size(next);
+        ++(*out_n);
+
       } else {
         list = next;
+        *out_lower_bound = curr;
         break;
       }
     }
   }
 end:
+  if (list != NULL) {
+    assert(*out_n > 0);
+    assert(get_next(curr) == *out_upper_bound);
+    if (*out_lower_bound == NULL) {
+      assert(original_list == list);
+    } else {
+      assert(get_next(*out_lower_bound) == list);
+    }
+    //    assert(*out_lower_bound != NULL);
+    //    if (*out_upper_bound != NULL) {
+    //      assert(block_is_adjacent(list, *out_upper_bound));
+    //    }
+  } else {
+    *out_n = 0;
+    *out_upper_bound = NULL;
+    *out_lower_bound = NULL;
+  }
   return list;
 }
 
@@ -372,6 +405,22 @@ int mm_init(void) {
 
   return 0;
 }
+/*
+static void block_coalesce(block_t *block, size_t to_size) {
+}
+
+block_t *heap_try_to_coalesce(size_t desired_size) {
+  const initial_class = find_list_for_size(desired_size);
+  for (int class = initial_class; class >= 0; --class) {
+    block_t *lower_bound = NULL;
+    block_t *upper_bound = NULL;
+    block_t *coalescable = list_find_coalescable_block(
+      &next_after_cluster, list_get_first(class), desired_size);
+    if (coalescable != NULL) {
+    }
+  }
+}
+ */
 
 block_t *allocate_new_block(size_t size) {
   block_t *block = mem_sbrk(size);
@@ -475,11 +524,17 @@ void free(void *ptr) {
   (void)previous_length;
   set_header(block, -1, false, NULL);
   list_push(block);
-//  block_t *coalescable = list_find_coalescable_block(list_get_first(list_index),
-//                                                     4 * get_size(block));
-//  if (coalescable != NULL) {
-//    debug("COALESCABLE %p\n", coalescable);
-//  }
+  {
+    int32_t n = -1;
+    block_t *upper_bound = NULL;
+    block_t *lower_bound = NULL;
+    block_t *coalescable = list_find_coalescable_block(
+      &lower_bound, &upper_bound, &n, list_get_first(list_index),
+      1 * get_size(block));
+    if (coalescable != NULL) {
+      debug("COALESCABLE %p %d\n", coalescable, n);
+    }
+  }
   assert(heap_size() == (hsize + 1));
   assert(free_length(list_get_first(list_index)) == (previous_length + 1));
   update_sizes();
