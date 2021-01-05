@@ -39,10 +39,10 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-//#define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
-#define debug(...)
-#undef assert
-#define assert(...)
+#define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
+//#define debug(...)
+//#undef assert
+//#define assert(...)
 
 uint32_t free_counter = 0;
 uint32_t malloc_counter = 0;
@@ -117,7 +117,7 @@ static block_t *get_next(block_t *block) {
   return block->next;
 }
 
-bool has_cycle(block_t *list) {
+bool list_has_cycle(block_t *list) {
   return false;
   block_t *tail = list;
   block_t *head = list;
@@ -172,7 +172,6 @@ block_t *list_get_first(int class) {
 }
 
 block_t *list_first_fit(int class, size_t desired_size) {
-
   if (heapp[class] == NULL) {
     return NULL;
   }
@@ -213,20 +212,52 @@ block_t *search_for_block_of_size(size_t desired_size) {
   return NULL;
 }
 
+bool list_is_sorted(block_t *list) {
+  while (get_next(list) != NULL) {
+    if (get_next(list) < list) {
+      debug("NOT SORTED next: %p is < than root: %p\n", get_next(list), list);
+      return false;
+    }
+    list = get_next(list);
+  }
+  return true;
+}
+
+//block_t* list_find_coalescable_block(size_t desired_size) {
+//
+//  while() {
+//
+//  }
+//}
+
 void list_push(block_t *block) {
   assert(block != NULL);
   assert(!block_is_allocated(block));
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
   int list_index = find_list_for_size(get_size(block));
-  if (heapp[list_index] == NULL) {
+  if (heapp[list_index] == NULL) { ///adding to empty list
     heapp[list_index] = block;
   } else {
     assert(!block_is_allocated(heapp[list_index]));
-    set_next(block, heapp[list_index]);
-    heapp[list_index] = block;
+    block_t *root = heapp[list_index];
+    if (block < root) { /// case when block is already smaller than root
+      set_next(block, heapp[list_index]);
+      heapp[list_index] = block;
+    } else { /// case when we have to find place for our block
+      while (get_next(root) != NULL && block > get_next(root)) {
+        if (get_next(root) == NULL) {
+          break;
+        }
+        root = get_next(root);
+      }
+      block_t *next = get_next(root);
+      set_next(root, block);
+      set_next(block, next);
+    }
   }
-  assert(!has_cycle(heapp[list_index]));
+  assert(!list_has_cycle(heapp[list_index]));
+  assert(list_is_sorted(heapp[list_index]));
 }
 
 int block_position(block_t *list, block_t *block, int from) {
@@ -334,8 +365,10 @@ block_t *split_block(block_t *block, size_t desired_size) {
   size_t old_size = get_size(block);
   (void)old_size;
   block_t *new_block = block_resize(block, desired_size);
-  debug("SPLITTED %p=%ld into %ld and %ld sized blocks [%p]\n", block, old_size,
-        get_size(block), get_size(new_block), new_block);
+  split_counter++;
+  debug("%d SPLITTED %p=%ld into %ld and %ld sized blocks [%p]\n",
+        split_counter, block, old_size, get_size(block), get_size(new_block),
+        new_block);
   return new_block;
 }
 
@@ -481,7 +514,8 @@ void validate_list(block_t *list) {
     assert(get_size(list) > 0);
     assert(get_size(list) % 2 == 0);
     assert(((void *)get_next(list)) < mem_sbrk(0));
-    assert(!has_cycle(list));
+    assert(!list_has_cycle(list));
+    assert(list_is_sorted(list));
     list = list->next;
   }
 }
