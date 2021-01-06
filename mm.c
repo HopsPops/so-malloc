@@ -190,8 +190,10 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
   *get_header(block) = size | is_allocated;
   *get_footer(block) = size | is_allocated;
   assert(*get_header(block) == *get_footer(block));
-  assert(((void *)next) < mem_sbrk(0));
-  set_next(block, next);
+  if ((int64_t)next != -1) {
+    assert(((void *)next) < mem_sbrk(0));
+    set_next(block, next);
+  }
 }
 
 static block_t *block_resize(block_t *block, size_t size) {
@@ -551,17 +553,17 @@ static void block_get_boundaries(block_t *block, block_t **out_before,
   //  if (((int64_t)block - ((int64_t)mem_heap_lo()) >= 100)) {
   if (block > (block_t *)0x80000000c) {
     block_footer *footer = ((block_footer *)block) - 1;
-    if (!header_is_allocated(*footer)) {
-      block_before = (block_t *)((uint8_t *)block - header_get_size(*footer));
-      assert(block_end(block_before) == block);
-    }
+    //    if (!header_is_allocated(*footer)) {
+    block_before = (block_t *)((uint8_t *)block - header_get_size(*footer));
+    assert(block_end(block_before) == block);
+    //    }
   }
   if ((void *)block_end(block) <= mem_heap_hi()) {
     //    block_header *header = ((block_header *)block_end(block));
-    if (!block_is_allocated(block_end(block))) {
-      block_after = block_end(block);
-      assert(block_end(block) == block_after);
-    }
+    //    if (!block_is_allocated(block_end(block))) {
+    block_after = block_end(block);
+    assert(block_end(block) == block_after);
+    //    }
   }
   *out_before = block_before;
   *out_after = block_after;
@@ -581,32 +583,41 @@ static block_t *block_eager_coalesce(block_t *block) {
     if (block_before != NULL) {
       total_size += get_size(block_before);
     }
-    if (block_after != NULL) {
+    if (block_after != NULL && block_is_allocated(block_after)) {
       total_size += get_size(block_after);
     }
-    if (total_size < 256) {
-      return block;
-    }
+    //    if (total_size < 256) {
+    //      return block;
+    //    }
   }
   debug("EAGER COALESCE %p %p %p (", block_before, block, block_after);
-  if (block_after != NULL) {
-    heap_remove(block_after);
-    size += get_size(block_after);
-    debug("%ld,", get_size(block_after));
-  } else {
-    debug("-,");
-  }
-  debug("%ld,", get_size(block));
   if (block_before != NULL) {
-    heap_remove(block_before);
+    if (block_is_allocated(block_before)) {
+      heap_remove(block_before);
+    }
     size += get_size(block_before);
+    debug("%ld, %ld,", get_size(block_before), get_size(block));
     block = block_before;
-    debug("%ld)", get_size(block_before));
+  } else {
+    debug("-, %ld,", get_size(block));
+  }
+  if (block_after != NULL) {
+    if (!block_is_allocated(block_after)) {
+      heap_remove(block_after);
+      size += get_size(block_after);
+      debug("%ld)", get_size(block_after));
+    } else {
+      debug("a)");
+    }
   } else {
     debug("-)");
   }
   debug("=%ld [%p]\n", size, block);
-
+  if (block_before && block == block_before &&
+      block_is_allocated(block_before)) {
+    set_header(block, size, true, (block_t *)-1);
+    return NULL;
+  }
   set_header(block, size, true, NULL);
   return block;
 }
@@ -767,15 +778,19 @@ void free(void *ptr) {
   free_counter++;
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
-  while (true) {
+  debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
+//  block = block_eager_coalesce(block);
+//  if (block == NULL) {
+//    return;
+//  }
+  /*while (true) {
     block_t *new_block = block_eager_coalesce(block);
     if (get_size(block) == get_size(new_block)) {
       block = new_block;
       break;
     }
     block = new_block;
-  }
-  debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
+  }*/
   assert(!heap_contains(block));
   assert(get_size(block) > 0);
   assert(get_size(block) % 2 == 0);
