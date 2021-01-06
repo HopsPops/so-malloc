@@ -91,6 +91,10 @@ int find_list_for_size(size_t size) {
   return i;
 }
 
+static block_header *get_header(block_t *block) {
+  return &block->header;
+}
+
 static void *block_end(block_t *block) {
   return (void *)((char *)block + (block->header & -2));
 }
@@ -98,9 +102,7 @@ static void *block_end(block_t *block) {
 static size_t round_up(size_t size) {
   return (size + ALIGNMENT - 1) & -ALIGNMENT;
 }
-static block_header *get_header(block_t *block) {
-  return &block->header;
-}
+
 static block_footer *get_footer(block_t *block) {
   block_footer *footerp =
     (block_footer *)(block_end(block) - sizeof(block_footer));
@@ -121,6 +123,11 @@ static bool block_is_allocated(block_t *block) {
   assert(block != NULL);
   return block->header & 1;
 }
+
+static uint8_t *get_payload(block_t *block) {
+  return block->payload;
+}
+
 #define GET_NEXT(block) (*((block_t **)&block->payload))
 static block_t *get_next(block_t *block) {
   assert(block != NULL);
@@ -160,7 +167,7 @@ static void set_next(block_t *block, block_t *next) {
   if (next != NULL) {
     assert(!block_is_allocated(block));
   }
-  block_t **payload = (block_t **)&block->payload;
+  block_t **payload = (block_t **)get_payload(block);
   *payload = next;
   assert(GET_NEXT(block) == next);
 }
@@ -613,7 +620,7 @@ block_t *find_block(size_t size) {
   assert(block_position(list_get_first(list_index), block, 0) == -1);
   if (block == NULL) {
     block = allocate_new_block(size);
-    debug("ALLOCATED %p PAYLOAD %p\n", block, block->payload);
+    debug("ALLOCATED %p PAYLOAD %p\n", block, get_payload(block));
     assert(get_next(block) == NULL);
     assert(get_size(block) >= size);
     set_header(block, -1, true, NULL);
@@ -629,7 +636,7 @@ block_t *find_block(size_t size) {
   set_header(block, -1, true, NULL);
   //  assert(list_length(list_get_first(list_index)) <=
   //         previous_length - (splitted_block == NULL ? 1 : 0));
-  debug("FOUND %p PAYLOAD %p\n", block, block->payload);
+  debug("FOUND %p PAYLOAD %p\n", block, get_payload(block));
   return block;
 }
 
@@ -662,7 +669,7 @@ void *malloc(size_t size) {
   if (malloc_counter % 100 == 0) {
     heap_cleanup();
   }
-  return block->payload;
+  return get_payload(block);
 }
 
 /*
