@@ -80,7 +80,7 @@ static int sizes[CLASSES_N] = {0};
 //#define MAGIC ((void *)NULL)
 //#define MAGIC ((void *)0xCAFEBABE)
 
-int find_list_for_size(size_t size) {
+int block_get_class(size_t size) {
   int i = 0;
   while (CLASSES[i + 1]) {
     if (CLASSES[i] >= size) {
@@ -96,7 +96,11 @@ static block_header *get_header(block_t *block) {
 }
 
 static void *block_end(block_t *block) {
-  return (void *)((char *)block + (block->header & -2));
+  return (void *)((char *)block + (*get_header(block) & -2));
+}
+
+static bool header_is_allocated(block_header header) {
+  return header & 1;
 }
 
 static size_t round_up(size_t size) {
@@ -121,14 +125,14 @@ static size_t get_size(block_t *block) {
 
 static bool block_is_allocated(block_t *block) {
   assert(block != NULL);
-  return block->header & 1;
+  return header_is_allocated(*get_header(block));
 }
 
 static uint8_t *get_payload(block_t *block) {
   return block->payload;
 }
 
-#define GET_NEXT(block) (*((block_t **)&block->payload))
+#define GET_NEXT(block) (*((block_t **)get_payload(block)))
 static block_t *get_next(block_t *block) {
   assert(block != NULL);
   assert(((int64_t)GET_NEXT(block)) % 2 == 0);
@@ -241,7 +245,7 @@ block_t *list_first_fit(int class, size_t desired_size) {
 }
 
 block_t *search_for_block_of_size(size_t desired_size) {
-  int class = find_list_for_size(desired_size);
+  int class = block_get_class(desired_size);
   for (int i = class; i < CLASSES_N; i++) {
     block_t *block_found = list_first_fit(i, desired_size);
     if (block_found != NULL) {
@@ -270,6 +274,13 @@ bool list_remove(int class, block_t *block) {
   assert(!list_contains(heapp[class], block));
   return next;
 }
+/*
+
+static bool heap_remove(block_t *block) {
+  const int class = block_get_class(get_size(block));
+  return list_remove(class, block);
+}
+*/
 
 bool list_is_sorted(block_t *list) {
   while (get_next(list) != NULL) {
@@ -387,7 +398,7 @@ void list_push(block_t *block) {
   assert(!block_is_allocated(block));
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
-  const int list_index = find_list_for_size(get_size(block));
+  const int list_index = block_get_class(get_size(block));
 #ifdef DEBUG
 //  const int lsize = list_length(list_get_first(list_index));
 #endif
@@ -524,8 +535,18 @@ static void block_coalesce(block_t *coalescable, int class,
   }
 }
 
+/*
+
+static void block_eager_coalesce(block_t *block) {
+  block_t *block_before = NULL;
+  block_t *block_after = NULL;
+  if (block >= mem_heap_lo()) {
+  }
+}
+*/
+
 block_t *heap_try_to_coalesce(size_t desired_size) {
-  const int initial_class = find_list_for_size(desired_size);
+  const int initial_class = block_get_class(desired_size);
   for (int class = initial_class; class >= 0; --class) {
     block_t *lower_bound = NULL;
     block_t *upper_bound = NULL;
@@ -608,7 +629,7 @@ block_t *split_block(block_t *block, size_t desired_size) {
 
 block_t *find_block(size_t size) {
 #ifdef DEBUG
-  const int list_index = find_list_for_size(size);
+  const int list_index = block_get_class(size);
 //  const int previous_length = list_length(list_get_first(list_index));
 #endif
   //  const int hsize = heap_size();
@@ -689,7 +710,7 @@ void free(void *ptr) {
 
 #ifdef DEBUG
 //  const int hsize = heap_size();
-//  const int list_index = find_list_for_size(get_size(block));
+//  const int list_index = block_get_class(get_size(block));
 //  const int previous_length = list_length(list_get_first(list_index));
 #endif
   set_header(block, -1, false, NULL);
