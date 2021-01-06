@@ -39,7 +39,7 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-//#define DEBUG
+#define DEBUG
 #ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 #else
@@ -53,6 +53,7 @@ uint32_t malloc_counter = 0;
 uint32_t split_counter = 0;
 
 typedef uint32_t block_header;
+typedef block_header block_footer;
 
 struct __attribute__((__packed__)) block_t {
   block_header header;
@@ -77,7 +78,7 @@ const int CLASSES[] = {4,     8,         10,        12,        14,   16,
 static struct block_t *heapp[CLASSES_N] = {NULL};
 static int sizes[CLASSES_N] = {0};
 //#define MAGIC ((void *)NULL)
-#define MAGIC ((void *)0xCAFEBABE)
+//#define MAGIC ((void *)0xCAFEBABE)
 
 int find_list_for_size(size_t size) {
   int i = 0;
@@ -100,15 +101,15 @@ static size_t round_up(size_t size) {
 static block_header *get_header(block_t *block) {
   return &block->header;
 }
-// static block_footer *get_footer(block_t *block) {
-//  block_footer *footerp =
-//    (block_footer *)(block_end(block) - sizeof(block_footer));
-//
-//  return footerp;
-//}
+static block_footer *get_footer(block_t *block) {
+  block_footer *footerp =
+    (block_footer *)(block_end(block) - sizeof(block_footer));
+
+  return footerp;
+}
 
 static size_t get_size(block_t *block) {
-  //  assert(*get_header(block) == *get_footer(block));
+  assert(*get_header(block) == *get_footer(block));
   return *get_header(block) & -2;
 }
 
@@ -171,8 +172,8 @@ static void set_header(block_t *block, size_t size, bool is_allocated,
     size = get_size(block);
   }
   *get_header(block) = size | is_allocated;
-  //  *get_footer(block) = size | is_allocated;
-  //  assert(*get_header(block) == *get_footer(block));
+  *get_footer(block) = size | is_allocated;
+  assert(*get_header(block) == *get_footer(block));
   assert(((void *)next) < mem_sbrk(0));
   set_next(block, next);
 }
@@ -643,9 +644,9 @@ void *malloc(size_t size) {
   const size_t desired_size = size;
 #endif
   debug("%u MALLOC %ld ", malloc_counter, size);
-  size = round_up(sizeof(block_t) + /// header and next
-                  size              /// payload
-                  //                 + sizeof(block_header) /// footer
+  size = round_up(sizeof(block_t) +      /// header and next
+                  size                   /// payload
+                  + sizeof(block_footer) /// footer
 
   );
   block_t *block = find_block(size);
