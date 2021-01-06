@@ -39,7 +39,7 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 #else
@@ -243,6 +243,26 @@ block_t *search_for_block_of_size(size_t desired_size) {
   return NULL;
 }
 
+bool list_remove(int class, block_t *block) {
+  block_t *current = heapp[class];
+  if (current == block) {
+    heapp[class] = get_next(current);
+    set_next(current, NULL);
+    return current;
+  }
+  block_t *next = get_next(current);
+  for (; next != NULL; next = get_next(current)) {
+    if (next == block) {
+      set_next(current, get_next(next));
+      set_next(next, NULL);
+      break;
+    }
+    current = next;
+  }
+  assert(!list_contains(heapp[class], block));
+  return next;
+}
+
 bool list_is_sorted(block_t *list) {
   while (get_next(list) != NULL) {
     if (get_next(list) < list) {
@@ -379,19 +399,25 @@ void list_push(block_t *block) {
         root = get_next(root);
       }
       block_t *next = get_next(root);
-      if (next && block_is_adjacent(block, next)) {
-        size_t joint_size = get_size(block) + get_size(next);
-        debug("JOIN %p and %p, size: %ld+%ld=%ld\n", block, next,
-              get_size(block), get_size(next), joint_size);
-        block_t *next_next = get_next(next);
-        set_next(root, next_next);
-        set_header(block, joint_size, false, NULL);
-        list_push(block);
-      } else {
+      /*
+      size_t joint_size = get_size(root) + get_size(block);
+      if ((joint_size < 256) && block_is_adjacent(root, block)) {
+        debug("JOIN %p and %p, size: %ld+%ld=%ld\n", root, block,
+              get_size(root), get_size(block), joint_size);
+        list_remove(list_index, root);
+        set_header(root, joint_size, false, NULL);
+        list_push(root);
+        return;
 
-        set_next(root, block);
-        set_next(block, next);
+        //        block_t *next_next = get_next(next);
+        //        set_next(root, next_next);
+        //        set_header(block, joint_size, false, NULL);
+        //        list_push(block);
       }
+       */
+
+      set_next(root, block);
+      set_next(block, next);
     }
   }
   //  assert(!list_has_cycle(heapp[list_index]));
