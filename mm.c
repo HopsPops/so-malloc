@@ -66,10 +66,25 @@ struct __attribute__((__packed__)) block_t {
 };
 typedef struct block_t block_t;
 
-const int CLASSES[] = {4,     8,         10,        12,        14,   16,
-                       22,    28,        32,        64,        128,  256,
-                       512,   1024,      2048,      4096,      8192, 16384,
-                       65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
+struct __attribute__((__packed__)) dblock_t {
+  block_header header;
+  struct dblock_t *next;
+  /*
+   * We don't know what the size of the payload will be, so we will
+   * declare it as a zero-length array.  This allow us to obtain a
+   * pointer to the start of the payload.
+   */
+  uint8_t payload[];
+};
+typedef struct dblock_t dblock_t;
+
+// const int CLASSES[] = {4,     8,         10,        12,        14,   16,
+//                       22,    28,        32,        64,        128,  256,
+//                       512,   1024,      2048,      4096,      8192, 16384,
+//                       65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
+const int CLASSES[] = {4,     8,     16,        32,        64,        128,
+                       256,   512,   1024,      2048,      4096,      8192,
+                       16384, 65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
 
 #define MINIMAL_PAYLOAD_SIZE CLASSES[0]
 #define MINIMAL_BLOCK_SIZE                                                     \
@@ -285,7 +300,23 @@ bool list_remove(int class, block_t *block) {
   return false;
 }
 
+bool heap_contains(block_t *block) {
+  for (int i = 0; i < CLASSES_N; i++) {
+    block_t *head = list_get_first(i);
+    for (; head != NULL;) {
+      if (head == block) {
+        return true;
+        //        assert(false);
+      }
+      head = get_next(head);
+    }
+  }
+  return false;
+}
+
 static bool heap_remove(block_t *block) {
+  debug("HEAP REMOVE %p\n", block);
+  assert(heap_contains(block));
   const int class = block_get_class(get_size(block));
   return list_remove(class, block);
 }
@@ -474,20 +505,6 @@ int heap_size() {
   return size;
 }
 
-bool heap_contains(block_t *block) {
-  for (int i = 0; i < CLASSES_N; i++) {
-    block_t *head = list_get_first(i);
-    for (; head != NULL;) {
-      if (head == block) {
-        //        return true;
-        assert(false);
-      }
-      head = get_next(head);
-    }
-  }
-  return false;
-}
-
 void search_for_block(block_t *block) {
   for (int i = 0; i < CLASSES_N; i++) {
     block_t *head = list_get_first(i);
@@ -516,6 +533,10 @@ void update_sizes() {
  * mm_init - Called when a new trace starts.
  */
 int mm_init() {
+  {
+    struct dblock_t dblock;
+    (void)dblock;
+  }
   /* Pad heap start so first payload is at ALIGNMENT. */
   if ((long)mem_sbrk(ALIGNMENT - offsetof(block_t, payload)) < 0)
     return -1;
@@ -593,10 +614,14 @@ static block_t *block_eager_coalesce(block_t *block) {
   debug("EAGER COALESCE %p %p %p (", block_before, block, block_after);
   if (block_before != NULL) {
     if (block_is_allocated(block_before)) {
-      heap_remove(block_before);
+    } else {
+      if (!heap_remove(block_before)) {
+        assert(false);
+      }
     }
     size += get_size(block_before);
-    debug("%ld, %ld,", get_size(block_before), get_size(block));
+    debug("%ld%s, %ld,", get_size(block_before),
+          block_is_allocated(block_before) ? "a" : "", get_size(block));
     block = block_before;
   } else {
     debug("-, %ld,", get_size(block));
@@ -613,11 +638,15 @@ static block_t *block_eager_coalesce(block_t *block) {
     debug("-)");
   }
   debug("=%ld [%p]\n", size, block);
-  if (block_before && block == block_before &&
-      block_is_allocated(block_before)) {
-    set_header(block, size, true, (block_t *)-1);
-    return NULL;
+  if (block_before && block == block_before) {
+    set_header(block, size, block_is_allocated(block), (block_t *)-1);
+    if (block_is_allocated(block)) {
+      return NULL;
+    } else {
+      return block;
+    }
   }
+  assert(heap_contains(block));
   set_header(block, size, true, NULL);
   return block;
 }
@@ -722,6 +751,12 @@ block_t *find_block(size_t size) {
     assert(get_next(block) == NULL);
     assert(get_size(block) >= size);
     set_header(block, -1, true, NULL);
+    for (int i = 1; i < 4096 / size; i++) {
+      debug("FILLING PAGE %d %lu\n", i, 4096 / size);
+      block_t *new_block = allocate_new_block(size);
+      set_header(new_block, -1, false, NULL);
+      list_push(new_block);
+    }
     return block;
   }
   //  assert(heap_size() == (hsize - 1));
@@ -779,10 +814,14 @@ void free(void *ptr) {
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
   debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
-//  block = block_eager_coalesce(block);
-//  if (block == NULL) {
-//    return;
-//  }
+  assert(block_is_allocated(block));
+  block = block_eager_coalesce(block);
+  if (block == NULL) {
+    return;
+  }
+  if (!block_is_allocated(block)) {
+    return;
+  }
   /*while (true) {
     block_t *new_block = block_eager_coalesce(block);
     if (get_size(block) == get_size(new_block)) {
@@ -794,7 +833,6 @@ void free(void *ptr) {
   assert(!heap_contains(block));
   assert(get_size(block) > 0);
   assert(get_size(block) % 2 == 0);
-  assert(block_is_allocated(block));
   //  assert(GET_NEXT(block) == NULL);
 
 #ifdef DEBUG
