@@ -39,7 +39,7 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 #else
@@ -77,14 +77,6 @@ struct __attribute__((__packed__)) dblock_t {
   uint8_t payload[];
 };
 typedef struct dblock_t dblock_t;
-
-// const int CLASSES[] = {4,     8,         10,        12,        14,   16,
-//                       22,    28,        32,        64,        128,  256,
-//                       512,   1024,      2048,      4096,      8192, 16384,
-//                       65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
-// const int CLASSES[] = {4,     8,     16,        32,        64,        128,
-//                       256,   512,   1024,      2048,      4096,      8192,
-//                       16384, 65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
 const int CLASSES[] = {8,     16,        32,        64,        128,  256,
                        512,   1024,      2048,      4096,      8192, 16384,
                        65536, 2 * 65536, 3 * 65536, 4 * 65536, 0};
@@ -857,6 +849,8 @@ block_t *find_block(size_t size) {
  *      Always allocate a block whose size is a multiple of the alignment.
  */
 void *malloc(size_t size) {
+  (void)block_eager_coalesce;
+
   print_sizes();
   malloc_counter++;
   assert(size > 0);
@@ -920,8 +914,8 @@ void free(void *ptr) {
 #ifdef DEBUG
 //  const int hsize = heap_size();
 //  const int previous_length = list_length(list_get_first(list_index));
-#endif
   const int list_index = block_get_class(get_size(block));
+#endif
   set_header(block, -1, false, NULL);
   list_push(block);
   /*{
