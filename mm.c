@@ -96,6 +96,7 @@ const int CLASSES[] = {8,     16,        32,        64,        128,  256,
 #define CLASSES_N (sizeof(CLASSES) / sizeof(typeof(*CLASSES)))
 static struct block_t *heapp[CLASSES_N] = {NULL};
 static size_t sizes[CLASSES_N] = {0};
+static void *first_block_position = NULL;
 
 size_t free_space_on_heap() {
   size_t size = 0;
@@ -327,6 +328,7 @@ bool list_remove(int class, block_t *block) {
 }
 
 bool heap_contains(block_t *block) {
+  assert(block != NULL);
   for (int i = 0; i < CLASSES_N; i++) {
     block_t *head = list_get_first(i);
     for (; head != NULL;) {
@@ -463,6 +465,7 @@ void list_push(block_t *block) {
   assert(!block_is_allocated(block));
   assert(get_size(block) > 0);
   assert(get_next(block) == NULL);
+  assert(!heap_contains(block));
   const int list_index = block_get_class(get_size(block));
 #ifdef DEBUG
 //  const int lsize = list_length(list_get_first(list_index));
@@ -570,22 +573,6 @@ int mm_init() {
   split_counter = 0;
 
   return 0;
-}
-static void block_coalesce(block_t *coalescable, int class,
-                           block_t *lower_bound, block_t *upper_bound,
-                           int32_t n, size_t cluster_size) {
-  set_header(coalescable, cluster_size, false, NULL);
-  debug("COALESCED [%d] %p, %d, %ld\n", class, coalescable, n, cluster_size);
-  if (lower_bound == NULL) {
-    heapp[class] = upper_bound;
-  } else {
-    assert(list_contains(list_get_first(class), lower_bound));
-    set_next(lower_bound, upper_bound);
-  }
-  assert(!list_has_cycle(list_get_first(class)));
-  if (upper_bound != NULL) {
-    assert(list_contains(list_get_first(class), upper_bound));
-  }
 }
 
 static block_t *previous_block(block_t *block) {
@@ -710,75 +697,106 @@ static block_t *block_eager_coalesce(block_t *block) {
   return block;
 }
 
-block_t *heap_try_to_coalesce(size_t desired_size) {
-  const int initial_class = block_get_class(desired_size);
-  for (int class = initial_class; class >= 0; --class) {
-    block_t *lower_bound = NULL;
-    block_t *upper_bound = NULL;
-    int32_t n = -1;
-    size_t cluster_size = -1;
-    block_t *list = list_get_first(class);
-    block_t *coalescable = list_find_coalescable_block(
-      &lower_bound, &upper_bound, &n, &cluster_size, list, desired_size);
-
-    if (coalescable != NULL) {
-#ifdef DEBUG
-      const int lsize = list_length(list);
-#endif
-      block_coalesce(coalescable, class, lower_bound, upper_bound, n,
-                     cluster_size);
-      assert(!list_contains(list_get_first(class), coalescable));
-      assert(list_length(list_get_first(class)) == (lsize - n));
-      assert(get_size(coalescable) >= desired_size);
-    }
-    return coalescable;
+static block_t* find_first_unallocated_block(block_t* block) {
+  while (block && block_is_allocated(block)) {
+    block = succesing_block(block);
   }
-  return NULL;
+  return block;
 }
 
-static void heap_cleanup() {
-  for (int class = 0; class < CLASSES_N - 1; class ++) {
-    for (int i = 0; true; i++) {
-      block_t *lower_bound = NULL;
-      block_t *upper_bound = NULL;
-      int32_t n = -1;
-      size_t cluster_size = -1;
-      block_t *list = list_get_first(class);
-      block_t *coalescable = list_find_coalescable_block(
-        &lower_bound, &upper_bound, &n, &cluster_size, list,
-        CLASSES[class + 1] - 1);
-      if (coalescable != NULL) {
-#ifdef DEBUG
-        const int lsize = list_length(list);
-#endif
-        debug("CLEANUP ");
-        block_coalesce(coalescable, class, lower_bound, upper_bound, n,
-                       cluster_size);
-        assert(!list_contains(list_get_first(class), coalescable));
-        assert(list_length(list_get_first(class)) == (lsize - n));
-        list_push(coalescable);
-      } else {
-        break;
-      }
+size_t measure_cluster(block_t *block, block_t **ended_at) {
+  debug("MEASURE CLUSTER %p\n", block);
+  size_t size = get_size(block);
+  block_t *successor = succesing_block(block);
+  while (successor && !block_is_allocated(successor)) {
+    size += get_size(successor);
+    if (succesing_block(successor) == NULL ||
+        block_is_allocated(succesing_block(successor))) {
+      *ended_at = successor;
+      break;
+    }
+    successor = succesing_block(successor);
+  }
+  return size;
+}
+
+void coalesce(block_t *block, size_t desired_size) {
+  size_t total_size = get_size(block);
+  block_t *successor = succesing_block(block);
+  if (successor == NULL) {
+    return;
+  }
+  while (true) {
+    assert(!block_is_allocated(successor));
+    heap_remove(successor);
+    total_size += get_size(successor);
+    if (total_size >= desired_size) {
+      break;
+    } else {
+      successor = succesing_block(successor);
     }
   }
+  if (!heap_remove(block)) {
+    assert(false);
+  }
+  set_header(block, total_size, block_is_allocated(block), get_next(block));
+  list_push(block);
+}
+
+block_t *heap_try_to_coalesce(size_t desired_size) {
+  block_t *block = first_block_position;
+  block = find_first_unallocated_block(block);
+  if (block) {
+    assert(heap_contains(block));
+  }
+
+  block_t *successor = block;
+  size_t cluster_size = 0;
+  while (block) {
+    cluster_size = measure_cluster(block, &successor);
+    if (cluster_size >= desired_size) {
+      break;
+    } else {
+      if (successor == block) {
+        return NULL;
+      }
+      block = succesing_block(successor);
+    }
+  }
+  if (block) {
+    if(cluster_size < 4096) {
+      return NULL;
+    }
+    debug("FOUND COALESCABLE BLOCK %p-%p=%ld %zu\n", block, successor,
+          cluster_size, desired_size);
+    assert(heap_contains(block));
+    coalesce(block, desired_size);
+    set_header(block, -1, false, NULL);
+    assert(get_size(block) >= desired_size);
+    assert(!block_is_allocated(block));
+    assert(heap_contains(block));
+  }
+
+  return block;
 }
 
 block_t *allocate_new_block(size_t size) {
   block_t *block = mem_sbrk(size);
   if ((long)block < 0)
     return NULL;
-
+  if (first_block_position == NULL) {
+    first_block_position = block;
+  }
   set_header(block, size, false, NULL);
   return block;
 }
 
 block_t *split_block(block_t *block, size_t desired_size) {
   assert((get_size(block) - desired_size) >= 0);
-  if (desired_size <= 16) {
+  if (desired_size <= 512) {
     return NULL;
   }
-  if ((get_size(block) - desired_size) <= MINIMAL_BLOCK_SIZE) {
+  if ((get_size(block) - desired_size) <= 4096) {
     return NULL;
   }
 #ifdef DEBUG
@@ -802,6 +820,11 @@ block_t *find_block(size_t size) {
   block_t *block = search_for_block_of_size(size);
   if (block == NULL) {
     block = heap_try_to_coalesce(size);
+    if (block) {
+      if (!heap_remove(block)) {
+        assert(false);
+      }
+    }
   }
   assert(block_position(list_get_first(list_index), block, 0) == -1);
   if (block == NULL) {
@@ -811,23 +834,20 @@ block_t *find_block(size_t size) {
     assert(get_size(block) >= size);
     set_header(block, -1, true, NULL);
     for (int i = 1; i < 4096 / size; i++) {
-      debug("FILLING PAGE %d %lu\n", i, 4096 / size);
       block_t *new_block = allocate_new_block(size);
+      debug("FILLING PAGE %d %lu %p PAYLOAD: %p\n", i, 4096 / size, new_block,
+            get_payload(new_block));
       set_header(new_block, -1, false, NULL);
       list_push(new_block);
     }
     return block;
   }
-  //  assert(heap_size() == (hsize - 1));
   assert(get_next(block) == NULL);
   block_t *splitted_block = split_block(block, size);
   if (splitted_block != NULL) {
     list_push(splitted_block);
-    //    assert(heap_size() == hsize);
   }
   set_header(block, -1, true, NULL);
-  //  assert(list_length(list_get_first(list_index)) <=
-  //         previous_length - (splitted_block == NULL ? 1 : 0));
   debug("FOUND %p PAYLOAD %p\n", block, get_payload(block));
   return block;
 }
@@ -873,7 +893,8 @@ void free(void *ptr) {
   block_t *block = pointer_to_block(ptr);
   debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
   assert(block_is_allocated(block));
-  if (approximate_free_space() > 0.30) {
+  /*if (approximate_free_space() > 0.30)*/
+  /*{
     block = block_eager_coalesce(block);
     if (block == NULL) {
       return;
@@ -881,7 +902,7 @@ void free(void *ptr) {
     if (!block_is_allocated(block)) {
       return;
     }
-  }
+  }*/
 
   //  while (true) {
   //    block_t *new_block = block_eager_coalesce(block);
@@ -903,7 +924,7 @@ void free(void *ptr) {
   const int list_index = block_get_class(get_size(block));
   set_header(block, -1, false, NULL);
   list_push(block);
-  {
+  /*{
     int32_t n = -1;
     size_t cluster_size = -1;
     block_t *upper_bound = NULL;
@@ -914,7 +935,7 @@ void free(void *ptr) {
     if (coalescable != NULL) {
       debug("COALESCABLE %p %d\n", coalescable, n);
     }
-  }
+  }*/
   //  assert(heap_size() == (hsize + 1));
   //  assert(list_length(list_get_first(list_index)) == (previous_length + 1));
 }
