@@ -39,7 +39,7 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define debug(...) dprintf(STDERR_FILENO, __VA_ARGS__)
 #else
@@ -778,6 +778,7 @@ block_t *find_block(size_t size) {
  *      Always allocate a block whose size is a multiple of the alignment.
  */
 void *malloc(size_t size) {
+  (void)heap_cleanup;
   malloc_counter++;
   assert(size > 0);
 #ifdef DEBUG
@@ -810,15 +811,16 @@ void *malloc(size_t size) {
  *      Computers have big memories; surely it won't be a problem.
  */
 void free(void *ptr) {
+  (void )block_eager_coalesce;
   free_counter++;
   assert(ptr != NULL);
   block_t *block = pointer_to_block(ptr);
   debug("%d FREE %p %p %ld\n", free_counter, ptr, block, get_size(block));
   assert(block_is_allocated(block));
-  block = block_eager_coalesce(block);
-  if (block == NULL) {
-    return;
-  }
+//  block = block_eager_coalesce(block);
+//  if (block == NULL) {
+//    return;
+//  }
   if (!block_is_allocated(block)) {
     return;
   }
