@@ -567,27 +567,31 @@ static void block_coalesce(block_t *coalescable, int class,
   }
 }
 
-static void block_get_boundaries(block_t *block, block_t **out_before,
-                                 block_t **out_after) {
-  block_t *block_before = NULL;
-  block_t *block_after = NULL;
-  //  if (((int64_t)block - ((int64_t)mem_heap_lo()) >= 100)) {
+static block_t *previous_block(const block_t *block) {
   if (block > (block_t *)0x80000000c) {
     block_footer *footer = ((block_footer *)block) - 1;
-    //    if (!header_is_allocated(*footer)) {
-    block_before = (block_t *)((uint8_t *)block - header_get_size(*footer));
+    block_t *block_before =
+      (block_t *)((uint8_t *)block - header_get_size(*footer));
     assert(block_end(block_before) == block);
-    //    }
+    return block_before;
   }
+  return NULL;
+}
+
+static block_t *succesing_block(const block_t *block) {
   if ((void *)block_end(block) <= mem_heap_hi()) {
-    //    block_header *header = ((block_header *)block_end(block));
-    //    if (!block_is_allocated(block_end(block))) {
-    block_after = block_end(block);
+    block_t *block_after = block_end(block);
     assert(block_end(block) == block_after);
-    //    }
+    return block_after;
   }
-  *out_before = block_before;
-  *out_after = block_after;
+  return NULL;
+}
+
+static void block_get_boundaries(block_t *block, block_t **out_before,
+                                 block_t **out_after) {
+
+  *out_before = previous_block(block);
+  *out_after = succesing_block(block);
 }
 
 static block_t *block_eager_coalesce(block_t *block) {
